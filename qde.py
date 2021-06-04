@@ -93,37 +93,26 @@ def build_qubo_matrix(f, dx, y1, qbits_integer, qbits_decimal):
     return Q, d_discret_elem
 
 
-def test1():
-    """Solves dy/dx = exp(x) by formulating it as a QUBO problem."""
-    grid_from = 0
-    grid_to = 0.1
-    N = 2
-    y1 = 1
-    qbits_integer = 1
-    qbits_decimal = 10
+def solve(f, dx, y1, qbits_integer, qbits_decimal):
+    """Solves a given differential equation, defined by f and y1, by formulating it as a QUBO problem with given discretization precision.
 
-    grid = np.linspace(grid_from, grid_to, N)
-    f = np.exp(grid)
-    dx = grid[1] - grid[0]
+    Args:
+        f (numpy.ndarray (1D)): Array of values of the derivative at the grid points.
+        dx (float): Grid step.
+        y1 (float): Solution's value at the leftmost point (boundary condition).
+        qbits_integer (int): Number of qubits to represent integer part of each expansion coefficient (value) of the sample solution.
+        qbits_decimal (int): Number of qubits to represent decimal part of each expansion coefficient.
+
+    Returns:
+        numpy.ndarray (1D): Values of solution function at grid points.
+    """
     Q, d_discret_elem = build_qubo_matrix(f, dx, y1, qbits_integer, qbits_decimal)
     Q_dict = {(i, j) : Q[i, j] for i in range(Q.shape[0]) for j in range(Q.shape[1])}
-    #  sample_state = {0: 0, 1: 1, 2: 0, 3: 0, 4: 0, 5: 1, 6: 1, 7: 0, 8: 0, 9: 1, 10: 1, 11: 0}
-    #  response = dimod.IdentitySampler().sample_qubo(Q_dict, initial_states=sample_state)
-    response = QBSolv().sample_qubo(Q_dict)
-    print(response)
-    ans_bin_dict = next(response.samples())
+    samples = QBSolv().sample_qubo(Q_dict)
+    print(samples)
+    ans_bin_dict = next(samples.samples())
     ans_bin = np.array([item[1] for item in ans_bin_dict.items()])
     ans_bin_2d = ans_bin.reshape(-1, len(d_discret_elem))
     ans_cont = np.sum(ans_bin_2d * d_discret_elem, 1)
-    print(ans_cont)
+    return ans_cont
 
-
-def test2():
-    Q = {('q1', 'q1'): 0.1, ('q2', 'q2'): 0.1, ('q1', 'q2'): -0.2}
-    res = QBSolv().sample_qubo(Q)
-    print(res)
-
-
-if __name__ == '__main__':
-    np.set_printoptions(linewidth = 200)
-    test1()
