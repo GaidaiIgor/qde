@@ -104,15 +104,16 @@ def solve(f, dx, y1, qbits_integer, qbits_decimal):
         qbits_decimal (int): Number of qubits to represent decimal part of each expansion coefficient.
 
     Returns:
-        numpy.ndarray (1D): Values of solution function at grid points.
+        numpy.ndarray (2D): Values of all found solution functions at grid points. Each row is a solution.
+        numpy.ndarray (1D): Errors for all found solutions.
     """
     Q, d_discret_elem = build_qubo_matrix(f, dx, y1, qbits_integer, qbits_decimal)
-    Q_dict = {(i, j) : Q[i, j] for i in range(Q.shape[0]) for j in range(Q.shape[1])}
-    samples = QBSolv().sample_qubo(Q_dict)
-    print(samples)
-    ans_bin_dict = next(samples.samples())
-    ans_bin = np.array([item[1] for item in ans_bin_dict.items()])
-    ans_bin_2d = ans_bin.reshape(-1, len(d_discret_elem))
-    ans_cont = np.sum(ans_bin_2d * d_discret_elem, 1)
-    return ans_cont
+    sample_set = QBSolv().sample_qubo(Q)
+    samples_bin = np.array([list(sample.values()) for sample in sample_set])
+    samples_bin_structured = samples_bin.reshape(samples_bin.shape[0], -1, len(d_discret_elem))
+    samples_cont = np.sum(samples_bin_structured * d_discret_elem, 2)
+    error_shift = (y1 / dx) ** 2 + 2 * f[0] * y1 / dx + np.sum(f[0:-1] ** 2)
+    errors = np.array([sample.energy for sample in sample_set.data(fields=['energy'])]) + error_shift
+    return samples_cont, errors
+
 

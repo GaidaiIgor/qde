@@ -13,8 +13,11 @@ def test1():
     grid = np.linspace(grid_from, grid_to, N)
     f = np.exp(grid)
     dx = grid[1] - grid[0]
-    ans = solve(f, dx, y1, qbits_integer, qbits_decimal)
-    print(ans)
+    solutions, errors = solve(f, dx, y1, qbits_integer, qbits_decimal)
+    print('Best solution:')
+    print(solutions[0, :])
+    print('Error:')
+    print(errors[0])
 
 
 def test2():
