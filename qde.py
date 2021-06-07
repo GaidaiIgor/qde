@@ -65,7 +65,7 @@ def build_discretization_vector(qbits_integer, qbits_decimal):
     return np.array([2 ** -j for j in j_range])
 
 
-def build_qubo_matrix(f, dx, y1, qbits_integer, qbits_decimal):
+def build_qubo_matrix(f, dx, y1, H_discret_elem, d_discret_elem):
     """Builds a QUBO matrix (Q) corresponding to a given differential equation. 
 
     A sample solution is represented by its values at grid points discretized using fixed point representation with set number of qubits.
@@ -76,24 +76,21 @@ def build_qubo_matrix(f, dx, y1, qbits_integer, qbits_decimal):
         f (numpy.ndarray (1D)): Array of values of the derivative at the grid points.
         dx (float): Grid step.
         y1 (float): Solution's value at the leftmost point (boundary condition).
-        qbits_integer (int): Number of qubits to represent integer part of each expansion coefficient (value) of the sample solution.
-        qbits_decimal (int): Number of qubits to represent decimal part of each expansion coefficient.
+        H_discret_elem (numpy.ndarray (2D)): Matrix discretization element for given number of qubits (see also build_discretization_matrix).
+        d_discret_elem (numpy.ndarray (1D)): Vector discretization element for given number of qubits (see also build_discretization_vector).
 
     Returns:
         Q (numpy.ndarray): QUBO matrix.
-        d_discret_elem (numpy.ndarray): Coefficient discretization vector.
     """
     H_cont = build_quadratic_minimization_matrix(len(f), dx)
     d_cont = build_quadratic_minimization_vector(f, dx, y1)
-    H_discret_elem = build_discretization_matrix(qbits_integer, qbits_decimal)
-    d_discret_elem = build_discretization_vector(qbits_integer, qbits_decimal)
     H_bin = np.block([[H_discret_elem * val for val in row] for row in H_cont])
     d_bin = np.block([d_discret_elem * val for val in d_cont])
     Q = H_bin + np.diag(d_bin)
-    return Q, d_discret_elem
+    return Q
 
 
-def solve(f, dx, y1, qbits_integer, qbits_decimal):
+def solve(f, dx, y1, qbits_integer, qbits_decimal, points_per_qubo=1, **kwargs):
     """Solves a given differential equation, defined by f and y1, by formulating it as a QUBO problem with given discretization precision.
 
     Args:
@@ -102,18 +99,30 @@ def solve(f, dx, y1, qbits_integer, qbits_decimal):
         y1 (float): Solution's value at the leftmost point (boundary condition).
         qbits_integer (int): Number of qubits to represent integer part of each expansion coefficient (value) of the sample solution.
         qbits_decimal (int): Number of qubits to represent decimal part of each expansion coefficient.
+        points_per_qubo (int): Number of points to propagate in each QUBO. Last point from the previous solution is used as boundary condition for the next solution.
+        kwargs (dict): Additional keyword arguments to QBSolv().sample_qubo
 
     Returns:
-        numpy.ndarray (2D): Values of all found solution functions at grid points. Each row is a solution.
-        numpy.ndarray (1D): Errors for all found solutions.
+        numpy.ndarray (2D): Values of the best found solution function at grid points.
     """
-    Q, d_discret_elem = build_qubo_matrix(f, dx, y1, qbits_integer, qbits_decimal)
-    sample_set = QBSolv().sample_qubo(Q)
-    samples_bin = np.array([list(sample.values()) for sample in sample_set])
-    samples_bin_structured = samples_bin.reshape(samples_bin.shape[0], -1, len(d_discret_elem))
-    samples_cont = np.sum(samples_bin_structured * d_discret_elem, 2)
-    error_shift = (y1 / dx) ** 2 + 2 * f[0] * y1 / dx + np.sum(f[0:-1] ** 2)
-    errors = np.array([sample.energy for sample in sample_set.data(fields=['energy'])]) + error_shift
-    return samples_cont, errors
+    solution = np.empty(len(f))
+    solution[0] = y1
+
+    H_discret_elem = build_discretization_matrix(qbits_integer, qbits_decimal)
+    d_discret_elem = build_discretization_vector(qbits_integer, qbits_decimal)
+    for i in range(1, len(f), points_per_qubo):
+        y1 = solution[i - 1]
+        next_i = min(i + points_per_qubo, len(f))
+        Q = build_qubo_matrix(f[i - 1 : next_i], dx, y1, H_discret_elem, d_discret_elem)
+        sample_set = QBSolv().sample_qubo(Q, **kwargs)
+        samples_bin = np.array([list(sample.values()) for sample in sample_set])
+        samples_bin_structured = samples_bin.reshape(samples_bin.shape[0], -1, len(d_discret_elem))
+        samples_cont = np.sum(samples_bin_structured * d_discret_elem, 2)
+        solution[i:next_i] = samples_cont[0, :]
+
+        #  error_shift = (y1 / dx) ** 2 + 2 * f[0] * y1 / dx + np.sum(f[0:-1] ** 2)
+        #  errors = np.array([sample.energy for sample in sample_set.data(fields=['energy'])]) + error_shift
+
+    return solution
 
 
