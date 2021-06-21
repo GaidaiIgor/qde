@@ -1,12 +1,12 @@
 """This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer.
 """
-import dimod
+import findiff
 import numpy as np
 from dwave_qbsolv import QBSolv
 
 
 def build_quadratic_minimization_matrix(npoints, dx):
-    """Builds a matrix that defines quadratic minimization problem (H) corresponding to a given differential equation.
+    """Builds a matrix that defines quadratic minimization problem (H) corresponding to a given 1st order differential equation using 1st order forward difference scheme.
 
     Args:
         npoints (int): Number of discretization points for functions defining a given problem.
@@ -18,6 +18,166 @@ def build_quadratic_minimization_matrix(npoints, dx):
     H = np.diag([2] * (npoints - 1)) + np.diag([-1] * (npoints - 2), 1) + np.diag([-1] * (npoints - 2), -1)
     H[-1, -1] = 1
     return H / dx ** 2
+
+
+def get_finite_difference_coefficients(deriv_order, accuracy_order):
+    """Returns coefficients of a given forward finite difference scheme.
+
+    Args:
+        deriv_order (int): Order of derivative.
+        accuracy_order (int): Order of accuracy.
+
+    Returns:
+        numpy.ndarray (1D): Coefficients of selected scheme.
+    """
+    if deriv_order == 0:
+        return np.array([1])
+
+    elif accuracy_order % 2 == 0:
+        ans = findiff.coefficients(deriv_order, accuracy_order)['forward']
+        return ans['coefficients']
+
+    else:
+        coeffs = None
+        if accuracy_order == 1:
+            if deriv_order == 1:
+                coeffs = np.array([-1, 1])
+            elif deriv_order == 2:
+                coeffs = np.array([1, -2, 1])
+
+        elif accuracy_order == 3:
+            if deriv_order == 1:
+                coeffs = np.array([-11/6, 3, -3/2, 1/3])
+
+        elif accuracy_order == 5:
+            if deriv_order == 1:
+                coeffs = np.array([-137/60, 5, -5, 10/3, -5/4, 1/5])
+
+        if coeffs is None:
+            raise NotImplementedError('Not implemented combination of derivative and accuracy orders')
+        else:
+            return coeffs
+
+
+def get_deriv_range(deriv_ind, point_ind, last_point_ind, max_considered_accuracy):
+    """Returns derivative order, accuracy order, shift and first point index of a given derivative term.
+
+    Args:
+        deriv_ind (int): Index of term in DE equation.
+        point_ind (int): Global index of point for which derivative range is requested.
+        last_point_ind (int): Maximum global point index eligible to be included in a given scheme.
+        max_considered_accuracy (int): Maximum considered accuracy order for a finite difference scheme.
+
+    Returns:
+        deriv_order (int): Derivative order of this term.
+        selected_accuracy (int): Selected accuracy order for this term. If <1, then the remaining return values are invalid.
+        length (int): Number of points in the selected scheme.
+        last_scheme_ind_global (int): Global index of the last point in the selected scheme.
+    """
+    deriv_order = deriv_ind - 1
+    if deriv_order == 0:
+        selected_accuracy = 1
+    else:
+        max_possible_accuracy = last_point_ind - point_ind - deriv_order + 1
+        selected_accuracy = min(max_considered_accuracy, max_possible_accuracy)
+
+    length = deriv_order + selected_accuracy
+    last_scheme_ind_global = point_ind + length - 1
+    return deriv_order, selected_accuracy, length, last_scheme_ind_global
+
+
+def add_linear_terms(d, point_ind, last_unknown_ind_global, funcs, dx, known_points, max_considered_accuracy):
+    """Adds linear matrix elements resulting from linear terms of error functional for a given point.
+
+    Args:
+        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
+        point_ind (int): Global index of point for which the terms are to be calculated.
+        last_unknown_ind_global (int): Global index of the last unknown variable included in a given calculation.
+        funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. See `build_quadratic_minimization_matrices_general` for more details.
+        dx (float): Grid step.
+        known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+    """
+    first_unknown_ind_global = known_points.shape[0]
+    for deriv_ind in range(1, funcs.shape[0]):
+        deriv_order, accuracy_order, length, last_scheme_ind_global = get_deriv_range(deriv_ind, point_ind, last_unknown_ind_global, max_considered_accuracy)
+        if last_scheme_ind_global < first_unknown_ind_global or accuracy_order < 1:
+            continue
+        coeffs = get_finite_difference_coefficients(deriv_order, accuracy_order)
+        func_factor = 2 * funcs[0, point_ind] * funcs[deriv_ind, point_ind] / dx ** deriv_order
+        for scheme_ind in range(length):
+            unknown_ind = point_ind + scheme_ind - first_unknown_ind_global
+            if unknown_ind < 0:
+                continue
+            else:
+                d[unknown_ind] += func_factor * coeffs[scheme_ind]
+
+
+def add_quadratic_terms(H, d, point_ind, last_unknown_ind_global, funcs, dx, known_points, max_considered_accuracy):
+    """Adds linear and quadratic matrix elements resulting from quadratic terms of error functional for a given point.
+
+    Args:
+        H (numpy.ndarray (2D)): Current quadratic minimization matrix to which quadratic matrix elements of specified point are added.
+        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
+        point_ind (int): Global index of point for which the terms are to be calculated.
+        last_unknown_ind_global (int): Global index of the last unknown variable included in a given calculation.
+        funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. See `build_quadratic_minimization_matrices_general` for more details.
+        dx (float): Grid step.
+        known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+    """
+    first_unknown_index_global = known_points.shape[0]
+    for deriv_ind1 in range(1, funcs.shape[0]):
+        deriv_order1, accuracy_order1, length1, last_scheme_ind_global1 = get_deriv_range(deriv_ind1, point_ind, last_unknown_ind_global, max_considered_accuracy)
+        if accuracy_order1 < 1:
+            continue
+        coeffs1 = get_finite_difference_coefficients(deriv_order1, accuracy_order1)
+        for deriv_ind2 in range(1, funcs.shape[0]):
+            deriv_order2, accuracy_order2, length2, last_scheme_ind_global2 = get_deriv_range(deriv_ind2, point_ind, last_unknown_ind_global, max_considered_accuracy)
+            if last_scheme_ind_global1 < first_unknown_ind_global and last_scheme_ind_global2 < first_unknown_ind_global or accuracy_order2 < 1:
+                continue
+            coeffs2 = get_finite_difference_coefficients(deriv_order2, accuracy_order2)
+            func_factor = funcs[deriv_ind1, point_ind] * funcs[deriv_ind2, point_ind] / dx ** (deriv_order1 + deriv_order2)
+            for scheme_ind1 in range(length1):
+                unknown_ind1 = point_ind + scheme_ind1 - first_unknown_ind_global
+                for scheme_ind2 in range(length2):
+                    unknown_ind2 = point_ind + scheme_ind2 - first_unknown_ind_global
+                    if unknown_ind1 < 0 and unknown_ind2 < 0:
+                        continue
+                    else:
+                        h_factor = func_factor * coeffs1[scheme_ind1] * coeffs2[scheme_ind2]
+                        if unknown_ind1 >= 0 and unknown_ind2 >= 0:
+                            H[unknown_ind1, unknown_ind2] += h_factor
+                        else:
+                            unknown_ind = max(unknown_ind1, unknown_ind2)
+                            known_ind = min(unknown_ind1, unknown_ind2) + first_unknown_ind_global
+                            d[unknown_ind] += h_factor * known_points[known_ind]
+
+
+def build_quadratic_minimization_matrices_general(funcs, dx, known_points, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Builds a matrix that defines quadratic minimization problem (H) corresponding to a given n-th order differential equation using k-th order (even) difference schemes.
+
+    Args:
+        funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. Functions are stored in rows. First row stores f (shift function).
+            Subsequent i-th row stores f_(i-1) (multiplier function of (i-1)-th derivative term). Number of columns is equal to number of function discretization points.
+        dx (float): Grid step.
+        known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
+
+    Returns:
+        H (numpy.ndarray (2D)): Quadratic minimization matrix.
+        d (numpy.ndarray (1D)): Quadratic minimization vector.
+    """
+    first_unknown_ind_global = known_points.shape[0]
+    unknowns = min(points_per_step, funcs.shape[1] - first_unknown_ind_global)
+    last_unknown_ind_global = first_unknown_ind_global + unknowns - 1
+    H = np.zeros((unknowns, unknowns))
+    d = np.zeros(unknowns)
+    for point_ind in range(last_unknown_ind_global + 1):
+        add_linear_terms(d, point_ind, last_unknown_ind_global, funcs, dx, known_points, max_considered_accuracy)
+        add_quadratic_terms(H, d, point_ind, last_unknown_ind_global, funcs, dx, known_points, max_considered_accuracy)
+    return H, d
 
 
 def build_quadratic_minimization_vector(f, dx, y1):
@@ -124,8 +284,7 @@ def solve(f, dx, y1, qbits_integer, qbits_decimal, signed=True, points_per_qubo=
         Q = build_qubo_matrix(next_f, dx, y1, H_discret_elem, d_discret_elem, signed)
         sample_set = QBSolv().sample_qubo(Q, **kwargs)
         samples_bin = np.array([list(sample.values()) for sample in sample_set])
-        samples_bin_structured = samples_bin.reshape(samples_bin.shape[0], -1, len(d_discret_elem))
-
+        samples_bin_structured = samples_bin.reshape((samples_bin.shape[0], -1, len(d_discret_elem)))
         samples_cont = np.sum(samples_bin_structured * d_discret_elem, 2)
         error_shift = (y1 ** 2 + 2 * y1 * next_f[0] * dx) / dx ** 2 + np.sum(next_f[0:-1] ** 2)
         if signed:
@@ -145,5 +304,3 @@ def solve(f, dx, y1, qbits_integer, qbits_decimal, signed=True, points_per_qubo=
         error += solution_energy + error_shift
 
     return solution, error
-
-
