@@ -19,7 +19,14 @@ def get_axes(axes):
 
 def filter_kwargs_plot(kwargs):
     """Filters out keys unknown to plot function."""
-    known_keys = {'color', 'linestyle', 'linewidth',  'marker', 'markersize', 'label'}
+    known_keys = {'color', 'linestyle', 'ls', 'linewidth', 'lw', 'marker', 'markersize', 'label'}
     return {key: value for key, value in kwargs.items() if key in known_keys}
+
+
+def myplot(x, y, axes=None, marker='.', **kwargs):
+    axes = get_axes(axes)
+    axes.plot(x, y, marker=marker, markersize=10, **filter_kwargs_plot(kwargs))
+    axes.legend().set_draggable(True)
+    return axes
 
 
