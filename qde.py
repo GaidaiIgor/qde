@@ -1,5 +1,6 @@
 """This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer.
 """
+import dimod
 import findiff
 import numpy as np
 from dwave_qbsolv import QBSolv
@@ -143,8 +144,8 @@ def add_quadratic_terms_qp(H, d, point_ind, last_unknown_ind_global, funcs, dx, 
                             d[unknown_ind] += h_factor * known_points[known_ind]
 
 
-def build_qp_matrices_general(funcs, dx, known_points, max_considered_accuracy=1, points_per_step=1, **kwargs):
-    """Builds a matrix that defines quadratic minimization problem (H) corresponding to a given n-th order differential equation using k-th order (even) difference schemes.
+def build_qp_matrices_general(funcs, dx, known_points, max_considered_accuracy, points_per_step):
+    """Builds matrices H and d that define quadratic minimization problem corresponding to a given n-th order differential equation using up to k-th order difference schemes.
 
     Args:
         funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. Functions are stored in rows. First row stores f (shift function).
@@ -167,6 +168,204 @@ def build_qp_matrices_general(funcs, dx, known_points, max_considered_accuracy=1
         add_linear_terms_qp(d, point_ind, last_unknown_ind_global, funcs, dx, known_points, max_considered_accuracy)
         add_quadratic_terms_qp(H, d, point_ind, last_unknown_ind_global, funcs, dx, known_points, max_considered_accuracy)
     return H, d
+
+
+def real_to_bits(num, bits_integer, bits_decimal):
+    """Returns the closest binary representation of a given real number.
+
+    Args:
+        num (float): Number to convert.
+        bits_integer (int): Number of bits to represent integer part of number.
+        bits_decimal (int): Number of bits to represent decimal part of number.
+
+    Returns:
+        bits (numpy.ndarray (1D)): Array of bits.
+    """
+    bits = np.zeros(bits_integer + bits_decimal, dtype=int)
+    represented = -2 ** (bits_integer - 1)
+    for i in range(len(bits)):
+        bit_value = 2 ** (bits_integer - 1 - i)
+        if represented + bit_value <= num:
+            bits[i] = 1
+            represented += bit_value
+    return bits
+
+
+def bits_to_real(bits, bits_integer):
+    """Returns a real number represented by given binary representation.
+
+    Args:
+        bits (numpy.ndarray (1D)): Array of bits.
+        bits_integer (int): Number of bits to represent integer part of number.
+
+    Returns:
+        num: Represented real number.
+    """
+    bits_decimal = len(bits) - bits_integer
+    discretization_vector = [2 ** -j for j in range(-bits_integer + 1, bits_decimal + 1)]
+    return np.dot(bits, discretization_vector) - 2 ** (bits_integer - 1)
+
+
+def add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs_i, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy):
+    """Adds linear matrix elements resulting from linear terms of error functional for a given point.
+
+    Args:
+        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
+        point_ind (int): Global index of point for which the terms are to be calculated.
+        last_unknown_point_global (int): Global index of the last unknown variable included in a given calculation.
+        funcs_i (numpy.ndarray (1D)): Values of all terms defining DE at the current point.
+        dx (float): Grid step.
+        known_bits (numpy.ndarray (1D)): Array of known bits in solution (continuous from the left end).
+        bits_integer (int): Number of bits to represent integer part of coefficients.
+        bits_decimal (int): Number of bits to represent decimal part of coefficients.
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+    """
+    bits_per_point = bits_integer + bits_decimal
+    first_unknown_point_global = int(len(known_bits) / bits_per_point)
+    for deriv_ind in range(1, len(funcs_i)):
+        deriv_order, accuracy_order, scheme_length, last_scheme_point_global = get_deriv_range(deriv_ind, point_ind, last_unknown_point_global, max_considered_accuracy)
+        if last_scheme_point_global < first_unknown_point_global or accuracy_order < 1:
+            continue
+        coeffs = get_finite_difference_coefficients(deriv_order, accuracy_order)
+        func_factor = 2 * funcs_i[0] * funcs_i[deriv_ind] / dx ** deriv_order
+        for scheme_point in range(scheme_length):
+            unknown_point = point_ind + scheme_point - first_unknown_point_global
+            if unknown_point < 0:
+                continue
+            else:
+                for unknown_bit in range(unknown_point * bits_per_point, (unknown_point + 1) * bits_per_point):
+                    j = unknown_bit - unknown_point * bits_per_point - bits_integer + 1
+                    d[unknown_bit] += func_factor * coeffs[scheme_point] * 2 ** (-j)
+
+
+def add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs_i, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy):
+    """Adds linear and quadratic matrix elements resulting from quadratic terms of error functional for a given point.
+
+    Args:
+        H (numpy.ndarray (2D)): Current quadratic minimization matrix to which quadratic matrix elements of specified point are added.
+        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
+        point_ind (int): Global index of point for which the terms are to be calculated.
+        last_unknown_point_global (int): Global index of the last unknown variable included in a given calculation.
+        funcs_i (numpy.ndarray (1D)): Values of all terms defining DE at the current point.
+        dx (float): Grid step.
+        known_bits (numpy.ndarray (1D)): Array of known bits in solution (continuous from the left end).
+        bits_integer (int): Number of bits to represent integer part of coefficients.
+        bits_decimal (int): Number of bits to represent decimal part of coefficients.
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+    """
+    bits_per_point = bits_integer + bits_decimal
+    first_unknown_point_global = int(len(known_bits) / bits_per_point)
+    for deriv_ind1 in range(1, len(funcs_i)):
+        deriv_order1, accuracy_order1, scheme_length1, last_scheme_point_global1 = get_deriv_range(deriv_ind1, point_ind, last_unknown_point_global, max_considered_accuracy)
+        if accuracy_order1 < 1:
+            continue
+        coeffs1 = get_finite_difference_coefficients(deriv_order1, accuracy_order1)
+        for deriv_ind2 in range(1, len(funcs_i)):
+            deriv_order2, accuracy_order2, scheme_length2, last_scheme_point_global2 = get_deriv_range(deriv_ind2, point_ind, last_unknown_point_global, max_considered_accuracy)
+            if last_scheme_point_global1 < first_unknown_point_global and last_scheme_point_global2 < first_unknown_point_global or accuracy_order2 < 1:
+                continue
+            coeffs2 = get_finite_difference_coefficients(deriv_order2, accuracy_order2)
+            func_factor = funcs_i[deriv_ind1] * funcs_i[deriv_ind2] / dx ** (deriv_order1 + deriv_order2)
+            for scheme_point1 in range(scheme_length1):
+                unknown_point1 = point_ind + scheme_point1 - first_unknown_point_global
+                for scheme_point2 in range(scheme_length2):
+                    unknown_point2 = point_ind + scheme_point2 - first_unknown_point_global
+                    if unknown_point1 < 0 and unknown_point2 < 0:
+                        continue
+                    else:
+                        c_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
+                        if unknown_point1 >= 0:
+                            for unknown_bit in range(unknown_point1 * bits_per_point, (unknown_point1 + 1) * bits_per_point):
+                                j = unknown_bit - unknown_point1 * bits_per_point - bits_integer + 1
+                                d[unknown_bit] -= c_factor * 2 ** (bits_integer - 1 - j)
+
+                        if unknown_point2 >= 0:
+                            for unknown_bit in range(unknown_point2 * bits_per_point, (unknown_point2 + 1) * bits_per_point):
+                                j = unknown_bit - unknown_point2 * bits_per_point - bits_integer + 1
+                                d[unknown_bit] -= c_factor * 2 ** (bits_integer - 1 - j)
+
+                        if unknown_point1 >= 0 and unknown_point2 >= 0:
+                            for unknown_bit1 in range(unknown_point1 * bits_per_point, (unknown_point1 + 1) * bits_per_point):
+                                j1 = unknown_bit1 - unknown_point1 * bits_per_point - bits_integer + 1
+                                for unknown_bit2 in range(unknown_point2 * bits_per_point, (unknown_point2 + 1) * bits_per_point):
+                                    j2 = unknown_bit2 - unknown_point2 * bits_per_point - bits_integer + 1
+                                    H[unknown_bit1, unknown_bit2] += c_factor * 2 ** -(j1 + j2)
+                        else:
+                            unknown_point = max(unknown_point1, unknown_point2)
+                            known_point_global = min(unknown_point1, unknown_point2) + first_unknown_point_global
+                            for unknown_bit in range(unknown_point * bits_per_point, (unknown_point + 1) * bits_per_point):
+                                j1 = unknown_bit - unknown_point * bits_per_point - bits_integer + 1
+                                for known_bit in range(known_point_global * bits_per_point, (known_point_global + 1) * bits_per_point):
+                                    j2 = known_bit - known_point_global * bits_per_point - bits_integer + 1
+                                    d[unknown_bit] += c_factor * known_bits[known_bit] * 2 ** -(j1 + j2)
+
+
+def build_qubo_matrix_general(funcs, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy, points_per_step):
+    """Builds matrix Q that defines quadratic unconstrained binary optimization (QUBO) problem corresponding to a given n-th order differential equation using up to k-th order difference schemes.
+
+    Args:
+        funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. Functions are stored in rows. First row stores f (shift function).
+            Subsequent i-th row stores f_(i-1) (multiplier function of (i-1)-th derivative term). Number of columns is equal to number of function discretization points.
+        dx (float): Grid step.
+        known_bits (numpy.ndarray (1D)): Array of known bits in solution (continuous from the left end).
+        bits_integer (int): Number of bits to represent integer part of coefficients.
+        bits_decimal (int): Number of bits to represent decimal part of coefficients.
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
+        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
+
+    Returns:
+        Q (numpy.ndarray (2D)): QUBO matrix.
+    """
+    bits_per_point = bits_integer + bits_decimal
+    first_unknown_point_global = int(len(known_bits) / bits_per_point)
+    unknown_points = min(points_per_step, funcs.shape[1] - first_unknown_point_global)
+    unknown_bits = unknown_points * bits_per_point
+    last_unknown_point_global = first_unknown_point_global + unknown_points - 1
+    H = np.zeros((unknown_bits, unknown_bits))
+    d = np.zeros(unknown_bits)
+    for point_ind in range(last_unknown_point_global + 1):
+        add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
+        add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
+    Q = H + np.diag(d)
+    return Q
+
+
+def solve_general(de_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs):
+    """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
+
+    Args:
+        de_terms (List[f(x, y)]): List of functions that define terms of a given DE.
+        grid (numpy.ndarray (1D)): Array of equidistant grid points (x).
+        known_points (numpy.ndarray (1D)): Array of known points (y).
+        bits_integer (int): Number of bits to represent integer part of each value of the sample solution.
+        bits_decimal (int): Number of bits to represent decimal part of each value of the sample solution.
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
+        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
+        kwargs (dict): args for QBSolv().sample_qubo.
+
+    Returns:
+        known_points (numpy.ndarray (1D)): Solution at all points of grid.
+    """
+    bits_per_point = bits_integer + bits_decimal
+    known_bits = np.concatenate(list(map(lambda x: real_to_bits(x, bits_integer, bits_decimal), known_points)))
+    known_points_extended = np.pad(known_points, (0, len(grid) - len(known_points)), constant_values=np.nan)
+    funcs = np.array([[term(*args) for args in zip(grid, known_points_extended)] for term in de_terms])
+    dx = grid[1] - grid[0]
+    while len(known_bits) < len(grid) * bits_per_point:
+        Q = build_qubo_matrix_general(funcs, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
+        # sample_set = dimod.ExactSolver().sample_qubo(Q)
+        sample_set = QBSolv().sample_qubo(Q, **kwargs)
+        samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
+        solution_bits = samples_plain[0, :]  # Take best sample
+        known_bits = np.concatenate((known_bits, solution_bits))
+        solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
+        solution_points = np.apply_along_axis(lambda point_bits: bits_to_real(bits, bits_integer), 1, solution_bits_shaped)
+        known_points = np.concatenate((known_points, solution_points))
+        # Update funcs
+        update_cols = range(len(known_points)-len(solution_points), len(known_points))
+        funcs[:, update_cols] = [[term(*args) for args in zip(grid[update_cols], solution_points)] for term in de_terms]
+
+    return known_points
 
 
 def build_discretization_matrix(qbits_integer, qbits_decimal):

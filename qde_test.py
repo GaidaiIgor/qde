@@ -102,15 +102,17 @@ class Hydrogen:
 
 
 def get_problem(problem, **kwargs):
-    """Returns problem-specific values: grid, funcs, boundary condition and answer."""
+    """Returns problem-specific values: grid, de_terms, boundary condition and answer.
+    kwargs: N, time_max, initial_position."""
     if problem == 0:
         # Problem: dy/dx = exp(x); y(0) = 1
         # Solution: y(x) = exp(x)
         N = kwargs.get('N', 11)
         grid = np.linspace(0, 1, N)
-        funcs = np.zeros((3, grid.shape[0]))
-        funcs[0, :] = -np.exp(grid)
-        funcs[2, :] = 1
+        de_terms = [None] * 3
+        de_terms[0] = lambda x, y: np.exp(x)
+        de_terms[1] = lambda x, y: 0
+        de_terms[2] = lambda x, y: 1
         known_points = np.exp(grid[0:1])
         solution = lambda x: np.exp(x)
 
@@ -121,10 +123,11 @@ def get_problem(problem, **kwargs):
         w = Hydrogen.freq
         period = Hydrogen.get_harmonic_period()
         grid = np.linspace(0, period, N)
-        funcs = np.zeros((4, grid.shape[0]))
-        funcs[0, :] = -2 * w ** 2 * Hydrogen.equilibrium
-        funcs[1, :] = 2 * w ** 2
-        funcs[3, :] = 1
+        de_terms = [None] * 4
+        de_terms[0] = lambda x, y: -2 * w ** 2 * Hydrogen.equilibrium
+        de_terms[1] = lambda x, y: 2 * w ** 2
+        de_terms[2] = lambda x, y: 0
+        de_terms[3] = lambda x, y: 1
         initial_position = 1.3
         initial_speed = 0
         known_points = np.array([initial_position, initial_position + initial_speed])
@@ -143,13 +146,75 @@ def get_problem(problem, **kwargs):
         a = Hydrogen.get_morse_a()
         m = Hydrogen.mu
         re = Hydrogen.equilibrium
-        funcs = lambda r: 2 * De * a / m * (exp(-2 * a * (r - re)) - exp(-a * (r - re)))  # Non-linear, need to be set by caller
+        de_terms = [None] * 4
+        de_terms[0] = lambda t, r: -2 * De * a / m * (exp(-2 * a * (r - re)) - exp(-a * (r - re)))
+        de_terms[1] = lambda t, r: 0
+        de_terms[2] = lambda t, r: 0
+        de_terms[3] = lambda t, r: 1
         solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
 
     else:
         raise Exception('Unknown problem')
 
-    return grid, funcs, known_points, solution
+    return grid, de_terms, known_points, solution
+
+
+def plot_analytical_solution(problem=0, **kwargs):
+    """Plots analytical solution of a given problem"""
+    grid, _, _, solution = get_problem(problem, **kwargs)
+    solution_vals = solution(grid)
+    if max(abs(np.imag(solution_vals))) < 1e-10:
+        solution_vals = np.real(solution_vals)
+    axes = myplot(grid, solution_vals, **kwargs)
+    return axes
+
+
+def get_qp_solution(problem, N=100, time_max=1000, initial_position=1.3, max_considered_accuracy=1, points_per_step=1):
+    """Returns QP solution of a given problem."""
+    grid, funcs, solution, true_solution = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    dx = grid[1] - grid[0]
+    if points_per_step is None:
+        points_per_step = len(grid)
+    while len(solution) < len(grid):
+        H, d = qde.build_qp_matrices_general(funcs, dx, solution, max_considered_accuracy, points_per_step)
+        solution = np.concatenate((solution, solve_qp(2 * H, d)))
+    return grid, solution, true_solution
+
+
+def test_qp_solution(**kwargs):
+    """Tests QP solution."""
+    grid, solution, true_solution = get_qp_solution(**kwargs)
+    print('Solution:')
+    print(solution)
+    ans = true_solution(grid[-1])
+    error = abs((solution[-1] - ans) / ans) * 100
+    print(f'Error: {error} %')
+
+
+def plot_qp_solution(problem, N=100, time_max=1000, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Plots QP solution of a given problem"""
+    grid, solution, _ = get_qp_solution(problem, N, time_max, initial_position, max_considered_accuracy, points_per_step)
+    axes = myplot(grid, solution, **kwargs)
+    axes.set_xlabel('Time, a.u.')
+    axes.set_ylabel('r, a.u.')
+    return axes
+
+
+def plot_qp_error(problem, time_max=1000, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Plots QP solution error as a function of number of grid points."""
+    Ns = np.geomspace(10, 100, 5, dtype=int)
+    plot_data = np.empty((2, len(Ns)))
+    for i in range(len(Ns)):
+        N = Ns[i]
+        grid, solution, true_solution = get_qp_solution(problem, N, time_max, initial_position, max_considered_accuracy, points_per_step)
+        true_ans = true_solution(grid[-1])
+        error = abs((solution[-1] - true_ans) / true_ans) * 100
+        plot_data[:, i] = (N, error)
+
+    axes = myplot(plot_data[0, :], plot_data[1, :], **kwargs)
+    axes.set_xlabel('N')
+    axes.set_ylabel('Error, %')
+    return axes
 
 
 def test_qubo(grid_from=0, grid_to=1, N=11, deriv=lambda xs: np.exp(xs), y1=1, ans=np.exp(1), qbits_integer=3, qbits_decimal=30, num_repeats=200, **kwargs):
@@ -166,53 +231,27 @@ def test_qubo(grid_from=0, grid_to=1, N=11, deriv=lambda xs: np.exp(xs), y1=1, a
     return solution
 
 
-def plot_analytical_solution(problem=0, **kwargs):
-    """Plots analytical solution of a given problem"""
-    grid, _, _, solution = get_problem(problem, **kwargs)
-    solution_vals = solution(grid)
-    if max(abs(np.imag(solution_vals))) < 1e-10:
-        solution_vals = np.real(solution_vals)
-    axes = myplot(grid, solution_vals, **kwargs)
-    return axes
+def plot_qubo_solution(problem, N=100, time_max=300, initial_position=1.3, bits_integer=3, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Plots QUBO solution of a given problem.
+    kwargs: QBSolv().sample_qubo, myplot."""
+    grid, de_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solution = qde.solve_general(de_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
 
-
-def get_qp_solution(problem=0, points_per_step=None, **kwargs):
-    grid, funcs, solution, true_solution = get_problem(problem, **kwargs)
-    dx = grid[1] - grid[0]
-    if points_per_step is None:
-        points_per_step = len(grid)
-    while len(solution) < len(grid):
-        H, d = qde.build_qp_matrices_general(funcs, dx, solution, points_per_step=points_per_step, **kwargs)
-        solution = np.concatenate((solution, solve_qp(2 * H, d)))
-    return grid, solution, true_solution
-
-
-def test_qp_solution(**kwargs):
-    """Tests QP solution."""
-    grid, solution, true_solution = get_qp_solution(**kwargs)
-    print('Solution:')
-    print(solution)
-    ans = true_solution(grid[-1])
-    error = abs((solution[-1] - ans) / ans) * 100
-    print(f'Error: {error} %')
-
-
-def plot_qp_solution(**kwargs):
-    """Plots QP solution of a given problem"""
-    grid, solution, _ = get_qp_solution(**kwargs)
     axes = myplot(grid, solution, **kwargs)
     axes.set_xlabel('Time, a.u.')
     axes.set_ylabel('r, a.u.')
     return axes
 
 
-def plot_qp_error(**kwargs):
-    """Plots QP solution error as a function of number of grid points."""
+def plot_qubo_error(problem, time_max=1000, initial_position=1.3, bits_integer=3, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Plots QUBO error as a function of number of grid points."""
     Ns = np.geomspace(10, 100, 5, dtype=int)
     plot_data = np.empty((2, len(Ns)))
     for i in range(len(Ns)):
         N = Ns[i]
-        grid, solution, true_solution = get_qp_solution(N=N, **kwargs)
+        grid, funcs, solution, true_solution = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+        dx = grid[1] - grid[0]
+        solution = qde.solve_general(funcs, dx, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
         true_ans = true_solution(grid[-1])
         error = abs((solution[-1] - true_ans) / true_ans) * 100
         plot_data[:, i] = (N, error)
@@ -221,25 +260,6 @@ def plot_qp_error(**kwargs):
     axes.set_xlabel('N')
     axes.set_ylabel('Error, %')
     return axes
-
-
-def plot_qubo_error(grid_from=0, grid_to=1, Ns=np.geomspace(10, 100, 5, dtype=int), deriv=lambda xs: np.exp(xs), y1=1, ans=np.exp(1), qbits_integer=3, qbits_decimal=30, num_repeats=200,
-                    label='QUBO', **kwargs):
-    """Plots QUBO error as a function of number of grid points."""
-    plot_data = np.empty((2, len(Ns)))
-    for i in range(len(Ns)):
-        N = Ns[i]
-        grid = np.linspace(grid_from, grid_to, N)
-        f = deriv(grid)
-        dx = grid[1] - grid[0]
-
-        solution_bin, error_sln = qde.solve(f, dx, y1, qbits_integer, qbits_decimal, num_repeats=num_repeats, **kwargs)
-        print(solution_bin[-1])
-        print(error_sln)
-        error = abs(solution_bin[-1] - ans)
-        plot_data[:, i] = (N, error)
-
-    return myplot(plot_data[0, :], plot_data[1, :], label=label, **kwargs)
 
 
 if __name__ == '__main__':
