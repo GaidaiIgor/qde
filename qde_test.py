@@ -110,7 +110,7 @@ def get_problem(problem, **kwargs):
         N = kwargs.get('N', 11)
         grid = np.linspace(0, 1, N)
         de_terms = [None] * 3
-        de_terms[0] = lambda x, y: np.exp(x)
+        de_terms[0] = lambda x, y: -np.exp(x)
         de_terms[1] = lambda x, y: 0
         de_terms[2] = lambda x, y: 1
         known_points = np.exp(grid[0:1])
@@ -147,7 +147,7 @@ def get_problem(problem, **kwargs):
         m = Hydrogen.mu
         re = Hydrogen.equilibrium
         de_terms = [None] * 4
-        de_terms[0] = lambda t, r: -2 * De * a / m * (exp(-2 * a * (r - re)) - exp(-a * (r - re)))
+        de_terms[0] = lambda t, r: -2 * De * a / m * (np.exp(-2 * a * (r - re)) - np.exp(-a * (r - re)))
         de_terms[1] = lambda t, r: 0
         de_terms[2] = lambda t, r: 0
         de_terms[3] = lambda t, r: 1
@@ -264,6 +264,6 @@ def plot_qubo_error(problem, time_max=1000, initial_position=1.3, bits_integer=3
 
 if __name__ == '__main__':
     np.set_printoptions(precision=15, linewidth=200)
-    test_qp(N=4)
+    plot_qubo_solution(problem=2, N=10)
     if not mpl.is_interactive():
         plt.show()

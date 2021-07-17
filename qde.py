@@ -359,7 +359,7 @@ def solve_general(de_terms, grid, known_points, bits_integer, bits_decimal, max_
         solution_bits = samples_plain[0, :]  # Take best sample
         known_bits = np.concatenate((known_bits, solution_bits))
         solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
-        solution_points = np.apply_along_axis(lambda point_bits: bits_to_real(bits, bits_integer), 1, solution_bits_shaped)
+        solution_points = np.apply_along_axis(lambda point_bits: bits_to_real(point_bits, bits_integer), 1, solution_bits_shaped)
         known_points = np.concatenate((known_points, solution_points))
         # Update funcs
         update_cols = range(len(known_points)-len(solution_points), len(known_points))
