@@ -1,10 +1,12 @@
+import findiff
+import matplotlib
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import qde
 from qpsolvers import solve_qp
 
-from plots_general import myplot
+from plots_general import my_plot, my_scatter
 
 import addcopyfighandler
 
@@ -33,7 +35,7 @@ class Hydrogen:
         equilibrium, force = (Hydrogen.equilibrium, Hydrogen.force)
         grid = np.linspace(-0.2, 0.2, 100) + equilibrium
         pot = force * (grid - equilibrium) ** 2
-        axes = myplot(grid, pot / Constants.eh_per_cm_1, **kwargs)
+        axes = my_plot(grid, pot / Constants.eh_per_cm_1, **kwargs)
         axes.set_xlabel(r'$\mathrm{H-H\ dist, a_0}$')
         axes.set_ylabel(r'$\mathrm{Energy, cm^{-1}}$')
         return axes
@@ -59,7 +61,7 @@ class Hydrogen:
     def plot_potential_morse(**kwargs):
         grid = np.linspace(-0.7, 9, 1000) + r0
         pot = Hydrogen.get_potential_morse(grid)
-        axes = myplot(grid, pot / Constants.eh_per_cm_1, **kwargs)
+        axes = my_plot(grid, pot / Constants.eh_per_cm_1, **kwargs)
         axes.set_xlabel(r'$\mathrm{r, a_0}$')
         axes.set_ylabel(r'$\mathrm{Energy, cm^{-1}}$')
         return axes
@@ -76,7 +78,7 @@ class Hydrogen:
     def plot_force_morse(**kwargs):
         grid = np.linspace(-0.7, 9, 1000) + re
         force = Hydrogen.get_force_morse(grid)
-        axes = myplot(grid, force / Constants.eh_per_cm_1, **kwargs)
+        axes = my_plot(grid, force / Constants.eh_per_cm_1, **kwargs)
         axes.set_xlabel(r'$\mathrm{r, a_0}$')
         axes.set_ylabel(r'$\mathrm{Force, cm^{-1} / a_0}$')
         axes.set_ylim(bottom=-20000, top=20000)
@@ -160,41 +162,21 @@ def get_problem(problem, **kwargs):
 
 
 def plot_analytical_solution(problem=0, **kwargs):
-    """Plots analytical solution of a given problem"""
+    """Plots analytical solution of a given problem."""
     grid, _, _, solution = get_problem(problem, **kwargs)
     solution_vals = solution(grid)
     if max(abs(np.imag(solution_vals))) < 1e-10:
         solution_vals = np.real(solution_vals)
-    axes = myplot(grid, solution_vals, **kwargs)
+    axes = my_plot(grid, solution_vals, **kwargs)
     return axes
 
 
-def get_qp_solution(problem, N=100, time_max=1000, initial_position=1.3, max_considered_accuracy=1, points_per_step=1):
-    """Returns QP solution of a given problem."""
-    grid, funcs, solution, true_solution = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    dx = grid[1] - grid[0]
-    if points_per_step is None:
-        points_per_step = len(grid)
-    while len(solution) < len(grid):
-        H, d = qde.build_qp_matrices_general(funcs, dx, solution, max_considered_accuracy, points_per_step)
-        solution = np.concatenate((solution, solve_qp(2 * H, d)))
-    return grid, solution, true_solution
+def plot_qp_solution_rt(problem, N=100, time_max=300, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Plots QP solution of a given problem in r-t space."""
+    grid, de_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solution = qde.solve_qp_general(de_terms, grid, solution, max_considered_accuracy, points_per_step, **kwargs)
 
-
-def test_qp_solution(**kwargs):
-    """Tests QP solution."""
-    grid, solution, true_solution = get_qp_solution(**kwargs)
-    print('Solution:')
-    print(solution)
-    ans = true_solution(grid[-1])
-    error = abs((solution[-1] - ans) / ans) * 100
-    print(f'Error: {error} %')
-
-
-def plot_qp_solution(problem, N=100, time_max=1000, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
-    """Plots QP solution of a given problem"""
-    grid, solution, _ = get_qp_solution(problem, N, time_max, initial_position, max_considered_accuracy, points_per_step)
-    axes = myplot(grid, solution, **kwargs)
+    axes = my_plot(grid, solution, **kwargs)
     axes.set_xlabel('Time, a.u.')
     axes.set_ylabel('r, a.u.')
     return axes
@@ -211,52 +193,52 @@ def plot_qp_error(problem, time_max=1000, initial_position=1.3, max_considered_a
         error = abs((solution[-1] - true_ans) / true_ans) * 100
         plot_data[:, i] = (N, error)
 
-    axes = myplot(plot_data[0, :], plot_data[1, :], **kwargs)
+    axes = my_plot(plot_data[0, :], plot_data[1, :], **kwargs)
     axes.set_xlabel('N')
     axes.set_ylabel('Error, %')
     return axes
 
 
-def test_qubo(grid_from=0, grid_to=1, N=11, deriv=lambda xs: np.exp(xs), y1=1, ans=np.exp(1), qbits_integer=3, qbits_decimal=30, num_repeats=200, **kwargs):
-    """Solves given differential equation by formulating it as a Quadratic Unconstrained Binary Optimization (QUBO) problem (binary coefficients)."""
-    grid = np.linspace(grid_from, grid_to, N)
-    f = deriv(grid)
-    dx = grid[1] - grid[0]
-    solution, error_sln = qde.solve(f, dx, y1, qbits_integer, qbits_decimal, num_repeats=num_repeats, **kwargs)
-    print('Solution:')
-    print(solution)
-    print(f'Solution error: {error_sln}')
-    error = abs(solution[-1] - ans)
-    print(f'Error: {error}')
-    return solution
-
-
-def plot_qubo_solution(problem, N=100, time_max=300, initial_position=1.3, bits_integer=3, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
-    """Plots QUBO solution of a given problem.
+def plot_qubo_solution_rt(problem, N=100, time_max=300, initial_position=1.3, bits_integer=4, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Solves DE with QUBO and plots r as function of time.
     kwargs: QBSolv().sample_qubo, myplot."""
     grid, de_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution = qde.solve_general(de_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
+    solution = qde.solve_qubo_general(de_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
 
-    axes = myplot(grid, solution, **kwargs)
+    axes = my_plot(grid, solution, **kwargs)
     axes.set_xlabel('Time, a.u.')
     axes.set_ylabel('r, a.u.')
     return axes
 
 
-def plot_qubo_error(problem, time_max=1000, initial_position=1.3, bits_integer=3, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
+def plot_qubo_solution_rv(problem, N=100, time_max=300, initial_position=1.3, bits_integer=4, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
+    """Solves DE with QUBO and plots r as function of velocity.
+    kwargs: QBSolv().sample_qubo, myplot."""
+    grid, de_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solution = qde.solve_qubo_general(de_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
+    dt = grid[1] - grid[0]
+    d_dt = findiff.FinDiff(0, dt)
+    velocity = d_dt(solution)
+
+    axes = my_scatter(velocity, solution, **kwargs)
+    axes.set_xlabel('dr/dt, a.u.')
+    axes.set_ylabel('r, a.u.')
+    return axes
+
+
+def plot_qubo_error(problem, time_max=300, initial_position=1.3, bits_integer=3, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
     """Plots QUBO error as a function of number of grid points."""
     Ns = np.geomspace(10, 100, 5, dtype=int)
     plot_data = np.empty((2, len(Ns)))
     for i in range(len(Ns)):
         N = Ns[i]
-        grid, funcs, solution, true_solution = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-        dx = grid[1] - grid[0]
-        solution = qde.solve_general(funcs, dx, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
+        grid, de_terms, solution, true_solution = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+        solution = qde.solve_qubo_general(de_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
         true_ans = true_solution(grid[-1])
         error = abs((solution[-1] - true_ans) / true_ans) * 100
         plot_data[:, i] = (N, error)
 
-    axes = myplot(plot_data[0, :], plot_data[1, :], **kwargs)
+    axes = my_plot(plot_data[0, :], plot_data[1, :], **kwargs)
     axes.set_xlabel('N')
     axes.set_ylabel('Error, %')
     return axes
@@ -264,6 +246,6 @@ def plot_qubo_error(problem, time_max=1000, initial_position=1.3, bits_integer=3
 
 if __name__ == '__main__':
     np.set_printoptions(precision=15, linewidth=200)
-    plot_qubo_solution(problem=2, N=10)
+    plot_qubo_solution_rt(problem=1, N=800, bits_decimal=30)
     if not mpl.is_interactive():
         plt.show()

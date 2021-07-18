@@ -25,9 +25,18 @@ def filter_kwargs_plot(kwargs):
     return {key: value for key, value in kwargs.items() if key in known_keys}
 
 
-def myplot(x, y, axes=None, marker='.', **kwargs):
+def my_plot(x, y, axes=None, marker='.', **kwargs):
     axes = get_axes(axes)
     axes.plot(x, y, marker=marker, markersize=10, **filter_kwargs_plot(kwargs))
+    handles = axes.get_legend_handles_labels()[0]
+    if handles:
+        axes.legend().set_draggable(True)
+    return axes
+
+
+def my_scatter(x, y, axes=None, marker='.', **kwargs):
+    axes = get_axes(axes)
+    axes.scatter(x, y, marker=marker, s=10, **filter_kwargs_plot(kwargs))
     handles = axes.get_legend_handles_labels()[0]
     if handles:
         axes.legend().set_draggable(True)
