@@ -174,32 +174,37 @@ def build_qp_matrices(funcs, dx, known_points, max_considered_accuracy, points_p
     return H, d
 
 
-def solve_qp(de_terms, grid, known_points, max_considered_accuracy, points_per_step, **kwargs):
-    """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
+def solve_ode_qp(system_terms, grid, known_points, max_considered_accuracy, points_per_step, **kwargs):
+    """Solves a given ODE system, defined by de_terms and known_points, by formulating it as a QP problem. Different equations are propagated one after another sequentially, not simultaneously.
 
     Args:
-        de_terms (List[f(x, y)]): List of functions that define terms of a given DE.
-        grid (numpy.ndarray (1D)): Array of equidistant grid points (x).
-        known_points (numpy.ndarray (1D)): Array of known points (y).
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
-        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
+        system_terms (numpy.ndarray): 2D array of functions that define terms of a given system of differential equations. Rows - equations, columns - terms.
+            Each term is a function that accepts x as first argument, and the values of all other functions in the order they are specified in system_terms as subsequent arguments.
+        grid (numpy.ndarray): 1D Array of equidistant grid points.
+        known_points (numpy.ndarray): 2D array of known points for each function in the system. Rows - equations, columns - points.
+        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is used if number of points is not sufficient.
+        points_per_step (int): Number of points to vary in a single QP problem.
         kwargs (dict): args for QBSolv().sample_qubo.
 
     Returns:
-        known_points (numpy.ndarray (1D)): Solution at all points of grid.
+        known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
     """
-    if points_per_step is None:
-        points_per_step = len(grid)
-    known_points_extended = np.pad(known_points, (0, len(grid) - len(known_points)), constant_values=np.nan)
-    funcs = np.array([[term(*args) for args in zip(grid, known_points_extended)] for term in de_terms])
+    known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
+    funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
     dx = grid[1] - grid[0]
-    while len(known_points) < len(grid):
-        H, d = build_qp_matrices(funcs, dx, known_points, max_considered_accuracy, points_per_step)
-        solution_points = qpsolvers.solve_qp(2 * H, d)
-        known_points = np.concatenate((known_points, solution_points))
+    while known_points.shape[1] < len(grid):
+        all_solution_points_list = []
+        for eq_ind in range(system_terms.shape[0]):
+            H, d = build_qp_matrices(funcs[eq_ind, :, :], dx, known_points[eq_ind, :], max_considered_accuracy, points_per_step)
+            solution_points = qpsolvers.solve_qp(2 * H, d)
+            all_solution_points_list.append(solution_points)
+
+        all_solution_points = np.array(all_solution_points_list)
+        known_points = np.hstack((known_points, all_solution_points))
         # Update funcs
-        update_cols = range(len(known_points)-len(solution_points), len(known_points))
-        funcs[:, update_cols] = [[term(*args) for args in zip(grid[update_cols], solution_points)] for term in de_terms]
+        update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
+        funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
+
     return known_points
 
 
@@ -364,13 +369,14 @@ def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_con
     return Q
 
 
-def solve_qubo(de_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs):
+def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs):
     """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
 
     Args:
-        de_terms (List[f(x, y)]): List of functions that define terms of a given DE.
-        grid (numpy.ndarray (1D)): Array of equidistant grid points (x).
-        known_points (numpy.ndarray (1D)): Array of known points (y).
+        system_terms (numpy.ndarray): 2D array of functions that define terms of a given system of differential equations. Rows - equations, columns - terms.
+            Each term is a function that accepts x as first argument, and the values of all other functions in the order they are specified in system_terms as subsequent arguments.
+        grid (numpy.ndarray): 1D Array of equidistant grid points.
+        known_points (numpy.ndarray): 2D array of known points for each function in the system. Rows - equations, columns - points.
         bits_integer (int): Number of bits to represent integer part of each value of the sample solution.
         bits_decimal (int): Number of bits to represent decimal part of each value of the sample solution.
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
@@ -378,25 +384,34 @@ def solve_qubo(de_terms, grid, known_points, bits_integer, bits_decimal, max_con
         kwargs (dict): args for QBSolv().sample_qubo.
 
     Returns:
-        known_points (numpy.ndarray (1D)): Solution at all points of grid.
+        known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
     """
     bits_per_point = bits_integer + bits_decimal
-    known_bits = np.concatenate(list(map(lambda x: real_to_bits(x, bits_integer, bits_decimal), known_points)))
-    known_points_extended = np.pad(known_points, (0, len(grid) - len(known_points)), constant_values=np.nan)
-    funcs = np.array([[term(*args) for args in zip(grid, known_points_extended)] for term in de_terms])
+    known_bits = np.array([np.concatenate([real_to_bits(elem, bits_integer, bits_decimal) for elem in row]) for row in known_points])
+    known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
+    funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
     dx = grid[1] - grid[0]
-    while len(known_bits) < len(grid) * bits_per_point:
-        Q = build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
-        # sample_set = dimod.ExactSolver().sample_qubo(Q)
-        sample_set = QBSolv().sample_qubo(Q, **kwargs)
-        samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
-        solution_bits = samples_plain[0, :]  # Take best sample
-        known_bits = np.concatenate((known_bits, solution_bits))
-        solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
-        solution_points = np.apply_along_axis(lambda point_bits: bits_to_real(point_bits, bits_integer), 1, solution_bits_shaped)
-        known_points = np.concatenate((known_points, solution_points))
+    while known_points.shape[1] < len(grid):
+        all_solution_bits_list = []
+        all_solution_points_list = []
+        for eq_ind in range(system_terms.shape[0]):
+            Q = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
+            # sample_set = dimod.ExactSolver().sample_qubo(Q)
+            sample_set = QBSolv().sample_qubo(Q, **kwargs)
+            samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
+            solution_bits = samples_plain[0, :]  # Take best sample
+            all_solution_bits_list.append(solution_bits)
+
+            solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
+            solution_points = np.array([bits_to_real(row_bits, bits_integer) for row_bits in solution_bits_shaped])
+            all_solution_points_list.append(solution_points)
+
+        all_solution_bits = np.array(all_solution_bits_list)
+        all_solution_points = np.array(all_solution_points_list)
+        known_bits = np.hstack((known_bits, all_solution_bits))
+        known_points = np.hstack((known_points, all_solution_points))
         # Update funcs
-        update_cols = range(len(known_points)-len(solution_points), len(known_points))
-        funcs[:, update_cols] = [[term(*args) for args in zip(grid[update_cols], solution_points)] for term in de_terms]
+        update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
+        funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
 
     return known_points

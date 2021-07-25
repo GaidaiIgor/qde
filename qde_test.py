@@ -104,17 +104,17 @@ class Hydrogen:
 
 
 def get_problem(problem, **kwargs):
-    """Returns problem-specific values: grid, de_terms, boundary condition and answer.
+    """Returns problem-specific values: grid, system_terms, boundary condition and answer.
     kwargs: N, time_max, initial_position."""
     if problem == 0:
         # Problem: dy/dx = exp(x); y(0) = 1
         # Solution: y(x) = exp(x)
         N = kwargs.get('N', 11)
         grid = np.linspace(0, 1, N)
-        de_terms = [None] * 3
-        de_terms[0] = lambda x, y: -np.exp(x)
-        de_terms[1] = lambda x, y: 0
-        de_terms[2] = lambda x, y: 1
+        system_terms = np.empty((1, 3), dtype=object)
+        system_terms[0, 0] = lambda x, y: -np.exp(x)
+        system_terms[0, 1] = lambda x, y: 0
+        system_terms[0, 2] = lambda x, y: 1
         known_points = np.exp(grid[0:1])
         solution = lambda x: np.exp(x)
 
@@ -125,11 +125,11 @@ def get_problem(problem, **kwargs):
         w = Hydrogen.freq
         period = Hydrogen.get_harmonic_period()
         grid = np.linspace(0, period, N)
-        de_terms = [None] * 4
-        de_terms[0] = lambda x, y: -2 * w ** 2 * Hydrogen.equilibrium
-        de_terms[1] = lambda x, y: 2 * w ** 2
-        de_terms[2] = lambda x, y: 0
-        de_terms[3] = lambda x, y: 1
+        system_terms = np.empty((1, 4), dtype=object)
+        system_terms[0, 0] = lambda x, y: -2 * w ** 2 * Hydrogen.equilibrium
+        system_terms[0, 1] = lambda x, y: 2 * w ** 2
+        system_terms[0, 2] = lambda x, y: 0
+        system_terms[0, 3] = lambda x, y: 1
         initial_position = 1.3
         initial_speed = 0
         known_points = np.array([initial_position, initial_position + initial_speed])
@@ -142,23 +142,47 @@ def get_problem(problem, **kwargs):
         N = kwargs.get('N', 1001)
         initial_position = kwargs.get('initial_position', 1.3)
         grid = np.linspace(0, time_max, N)
-        known_points = np.array([initial_position, initial_position])
+        known_points = np.array([initial_position, initial_position])[np.newaxis, :]
 
         De = Hydrogen.dissociation_energy
         a = Hydrogen.get_morse_a()
         m = Hydrogen.mu
         re = Hydrogen.equilibrium
-        de_terms = [None] * 4
-        de_terms[0] = lambda t, r: -2 * De * a / m * (np.exp(-2 * a * (r - re)) - np.exp(-a * (r - re)))
-        de_terms[1] = lambda t, r: 0
-        de_terms[2] = lambda t, r: 0
-        de_terms[3] = lambda t, r: 1
+
+        system_terms = np.empty((1, 4), dtype=object)
+        system_terms[0, 0] = lambda t, r: -2 * De * a / m * (np.exp(-2 * a * (r - re)) - np.exp(-a * (r - re)))
+        system_terms[0, 1] = lambda t, r: 0
+        system_terms[0, 2] = lambda t, r: 0
+        system_terms[0, 3] = lambda t, r: 1
+
+        solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
+
+    elif problem == 21:
+        # Problem: r'' = 2 * De * a / m * (exp(-2 * a * (r - re)) - exp(-a * (r - re))); r(0) = r0; r'(0) = 0
+        # Solution: Hydrogen.morse_trajectory_v0
+        time_max = kwargs.get('time_max', 1000)
+        N = kwargs.get('N', 1001)
+        initial_position = kwargs.get('initial_position', 1.3)
+        grid = np.linspace(0, time_max, N)
+        known_points = np.array([initial_position, 0])[:, np.newaxis]
+
+        De = Hydrogen.dissociation_energy
+        a = Hydrogen.get_morse_a()
+        m = Hydrogen.mu
+        re = Hydrogen.equilibrium
+
+        system_terms = np.empty((2, 3), dtype=object)
+        system_terms[0, 0] = lambda t, r, p: -p / m
+        system_terms[1, 0] = lambda t, r, p: -Hydrogen.get_force_morse(r)
+        system_terms[:, 1] = lambda t, r, p: 0
+        system_terms[:, 2] = lambda t, r, p: 1
+
         solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
 
     else:
         raise Exception('Unknown problem')
 
-    return grid, de_terms, known_points, solution
+    return grid, system_terms, known_points, solution
 
 
 def get_analytical_solution(problem=0, N=1000, time_max=300, initial_position=1.3, **kwargs):
@@ -171,32 +195,35 @@ def get_analytical_solution(problem=0, N=1000, time_max=300, initial_position=1.
 
 def get_qp_solution(problem, N=100, time_max=300, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
     """Plots QP solution of a given problem in r-t space."""
-    grid, de_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution = qde.solve_qp(de_terms, grid, solution, max_considered_accuracy, points_per_step, **kwargs)
+    grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solution = qde.solve_ode_qp(system_terms, grid, solution, max_considered_accuracy, points_per_step, **kwargs)
     return grid, solution
 
 
 def get_qubo_solution(problem, N=100, time_max=300, initial_position=1.3, bits_integer=4, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
-    grid, de_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution = qde.solve_qubo(de_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
+    grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solution = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
     return grid, solution
 
 
-def plot_solution_rt(grid, solution, **kwargs):
-    axes = my_plot(grid, solution, **kwargs)
-    axes.set_xlabel('Time, a.u.')
+def plot_solution_tr(t, r, **kwargs):
+    axes = my_plot(t, r, **kwargs)
+    axes.set_xlabel('t, a.u.')
     axes.set_ylabel('r, a.u.')
     return axes
 
 
-def plot_solution_rv(grid, solution, **kwargs):
-    dt = grid[1] - grid[0]
+def plot_solution_rp_tr(t, r, **kwargs):
+    dt = t[1] - t[0]
     d_dt = findiff.FinDiff(0, dt)
-    velocity = d_dt(solution)
+    p = Hydrogen.mu * d_dt(r)
+    return plot_solution_rp(r, p, **kwargs)
 
-    axes = my_scatter(velocity, solution, **kwargs)
-    axes.set_xlabel('dr/dt, a.u.')
-    axes.set_ylabel('r, a.u.')
+
+def plot_solution_rp(r, p, **kwargs):
+    axes = my_scatter(r, p, **kwargs)
+    axes.set_xlabel('r, a.u.')
+    axes.set_ylabel('p, a.u.')
     return axes
 
 
@@ -220,6 +247,6 @@ def plot_error(solution_n, true_answer_n, Ns=None, **kwargs):
 
 if __name__ == '__main__':
     np.set_printoptions(precision=15, linewidth=200)
-    plot_solution_rv(*get_analytical_solution(problem=2, N=1000, time_max=400), axes=None, marker='None')
+    t, sln = get_qubo_solution(problem=21)
     if not mpl.is_interactive():
         plt.show()
