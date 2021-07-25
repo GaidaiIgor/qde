@@ -1,7 +1,5 @@
 """This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer.
 """
-import dimod
-from dwave_qbsolv import QBSolv
 import findiff
 import numpy as np
 import qpsolvers
@@ -369,7 +367,7 @@ def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_con
     return Q
 
 
-def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs):
+def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, **kwargs):
     """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
 
     Args:
@@ -381,7 +379,8 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
         bits_decimal (int): Number of bits to represent decimal part of each value of the sample solution.
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
         points_per_step (int): Number of points to vary in the problem, defined by this matrix.
-        kwargs (dict): args for QBSolv().sample_qubo.
+        sampler (dimod.core.Sampler): Sampler to use.
+        kwargs (dict): Sampler parameters.
 
     Returns:
         known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
@@ -396,8 +395,8 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
         all_solution_points_list = []
         for eq_ind in range(system_terms.shape[0]):
             Q = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
-            # sample_set = dimod.ExactSolver().sample_qubo(Q)
-            sample_set = QBSolv().sample_qubo(Q, **kwargs)
+            job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}'
+            sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
             samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
             solution_bits = samples_plain[0, :]  # Take best sample
             all_solution_bits_list.append(solution_bits)

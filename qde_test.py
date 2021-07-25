@@ -1,10 +1,12 @@
+from dwave_qbsolv import QBSolv
+from dwave.system.samplers import DWaveSampler
+from dwave.system.composites import EmbeddingComposite
 import findiff
 import matplotlib
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import qde
-from qpsolvers import solve_qp
 
 from plots_general import my_plot, my_scatter
 
@@ -200,9 +202,19 @@ def get_qp_solution(problem, N=100, time_max=300, initial_position=1.3, max_cons
     return grid, solution
 
 
-def get_qubo_solution(problem, N=100, time_max=300, initial_position=1.3, bits_integer=4, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, **kwargs):
+def get_sampler(sampler_name):
+    if sampler_name == 'qbsolv':
+        return QBSolv()
+    elif sampler_name == 'dwave':
+        return EmbeddingComposite(DWaveSampler())
+    else:
+        raise Exception('Unknown sampler name')
+
+
+def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_integer=6, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, sampler_name='qbsolv', **kwargs):
     grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, **kwargs)
+    sampler = get_sampler(sampler_name)
+    solution = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, **kwargs)
     return grid, solution
 
 
