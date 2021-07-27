@@ -161,8 +161,7 @@ def get_problem(problem, **kwargs):
         solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
 
     elif problem == 21:
-        # Problem: r'' = 2 * De * a / m * (exp(-2 * a * (r - re)) - exp(-a * (r - re))); r(0) = r0; r'(0) = 0
-        # Solution: Hydrogen.morse_trajectory_v0
+        # Same as 2, but as a system of first-order equations
         time_max = kwargs.get('time_max', 1000)
         N = kwargs.get('N', 1001)
         initial_position = kwargs.get('initial_position', 1.3)
@@ -258,7 +257,7 @@ def plot_error(solution_n, true_answer_n, Ns=None, **kwargs):
     return axes
 
 
-if __name__ == '__main__':
+def main():
     np.set_printoptions(precision=15, linewidth=200)
     mpl.rcParams['axes.prop_cycle'] = cycler(color='brgkcmy')
 
@@ -273,3 +272,7 @@ if __name__ == '__main__':
 
     if not mpl.is_interactive():
         plt.show()
+
+
+if __name__ == '__main__':
+    main()
