@@ -1,3 +1,4 @@
+from cycler import cycler
 from dwave_qbsolv import QBSolv
 from dwave.system.samplers import DWaveSampler
 from dwave.system.composites import EmbeddingComposite
@@ -259,6 +260,16 @@ def plot_error(solution_n, true_answer_n, Ns=None, **kwargs):
 
 if __name__ == '__main__':
     np.set_printoptions(precision=15, linewidth=200)
-    t, sln = get_qubo_solution(problem=21)
+    mpl.rcParams['axes.prop_cycle'] = cycler(color='brgkcmy')
+
+    grid, solution = get_analytical_solution(problem=21, N=1600, time_max=400)
+    axes = plot_solution_rp_tr(grid, solution)
+
+    _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='qbsolv', num_repeats=100)
+    axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
+
+    _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
+    axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
+
     if not mpl.is_interactive():
         plt.show()

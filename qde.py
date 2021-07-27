@@ -385,6 +385,7 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
     Returns:
         known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
     """
+    known_points = np.vectorize(lambda num: bits_to_real(real_to_bits(num, bits_integer, bits_decimal), bits_integer))(known_points)
     bits_per_point = bits_integer + bits_decimal
     known_bits = np.array([np.concatenate([real_to_bits(elem, bits_integer, bits_decimal) for elem in row]) for row in known_points])
     known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
@@ -398,7 +399,18 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
             job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}'
             sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
             samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
-            solution_bits = samples_plain[0, :]  # Take best sample
+
+            # Best sample
+            solution_bits = samples_plain[0, :]
+
+            # print(f'Energy {sample_set.first.energy}, found {sample_set.first.num_occurrences} times')
+
+            # # Average sample
+            # num_occurrences = sample_set.data_vectors['num_occurrences']
+            # sample_points = np.array([bits_to_real(bits, bits_integer) for bits in samples_plain])
+            # average_point = np.dot(sample_points, num_occurrences / sum(num_occurrences))
+            # solution_bits = real_to_bits(average_point, bits_integer, bits_decimal)
+
             all_solution_bits_list.append(solution_bits)
 
             solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
