@@ -88,20 +88,26 @@ def add_linear_terms_qp(d, point_ind, last_unknown_point_global, funcs_i, dx, kn
         dx (float): Grid step.
         known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+
+    Returns:
+        energy_shift (float): Constant part of minimization functional.
     """
+    energy_shift = funcs_i[0] ** 2
     first_unknown_point_global = known_points.shape[0]
-    for deriv_ind in reversed(range(1, len(funcs_i))):
+    for deriv_ind in range(1, len(funcs_i)):
         deriv_order, accuracy_order, length, last_scheme_point_global = get_deriv_range(deriv_ind, point_ind, last_unknown_point_global, max_considered_accuracy)
-        if last_scheme_point_global < first_unknown_point_global:
-            break
         coeffs = get_finite_difference_coefficients(deriv_order, accuracy_order)
         func_factor = 2 * funcs_i[0] * funcs_i[deriv_ind] / dx ** deriv_order
-        for scheme_point in reversed(range(length)):
-            unknown_point = point_ind + scheme_point - first_unknown_point_global
+        for scheme_point in range(length):
+            c_factor = func_factor * coeffs[scheme_point]
+            scheme_point_global = point_ind + scheme_point
+            unknown_point = scheme_point_global - first_unknown_point_global
             if unknown_point < 0:
-                break
+                energy_shift += c_factor * known_points[scheme_point_global]
             else:
-                d[unknown_point] += func_factor * coeffs[scheme_point]
+                d[unknown_point] += c_factor
+
+    return energy_shift
 
 
 def add_quadratic_terms_qp(H, d, point_ind, last_unknown_point_global, funcs_i, dx, known_points, max_considered_accuracy):
@@ -116,31 +122,36 @@ def add_quadratic_terms_qp(H, d, point_ind, last_unknown_point_global, funcs_i, 
         dx (float): Grid step.
         known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+
+    Returns:
+        energy_shift (float): Constant part of minimization functional.
     """
+    energy_shift = 0
     first_unknown_point_global = known_points.shape[0]
-    for deriv_ind1 in reversed(range(1, len(funcs_i))):
+    for deriv_ind1 in range(1, len(funcs_i)):
         deriv_order1, accuracy_order1, length1, last_scheme_point_global1 = get_deriv_range(deriv_ind1, point_ind, last_unknown_point_global, max_considered_accuracy)
         coeffs1 = get_finite_difference_coefficients(deriv_order1, accuracy_order1)
-        for deriv_ind2 in reversed(range(1, len(funcs_i))):
+        for deriv_ind2 in range(1, len(funcs_i)):
             deriv_order2, accuracy_order2, length2, last_scheme_point_global2 = get_deriv_range(deriv_ind2, point_ind, last_unknown_point_global, max_considered_accuracy)
-            if last_scheme_point_global1 < first_unknown_point_global and last_scheme_point_global2 < first_unknown_point_global:
-                break
             coeffs2 = get_finite_difference_coefficients(deriv_order2, accuracy_order2)
             func_factor = funcs_i[deriv_ind1] * funcs_i[deriv_ind2] / dx ** (deriv_order1 + deriv_order2)
-            for scheme_point1 in reversed(range(length1)):
-                unknown_point1 = point_ind + scheme_point1 - first_unknown_point_global
-                for scheme_point2 in reversed(range(length2)):
-                    unknown_point2 = point_ind + scheme_point2 - first_unknown_point_global
+            for scheme_point1 in range(length1):
+                scheme_point_global1 = point_ind + scheme_point1
+                unknown_point1 = scheme_point_global1 - first_unknown_point_global
+                for scheme_point2 in range(length2):
+                    scheme_point_global2 = point_ind + scheme_point2
+                    unknown_point2 = scheme_point_global2 - first_unknown_point_global
+                    c_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
                     if unknown_point1 < 0 and unknown_point2 < 0:
-                        break
+                        energy_shift += c_factor * known_points[scheme_point_global1] * known_points[scheme_point_global2]
+                    elif unknown_point1 >= 0 and unknown_point2 >= 0:
+                        H[unknown_point1, unknown_point2] += c_factor
                     else:
-                        h_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
-                        if unknown_point1 >= 0 and unknown_point2 >= 0:
-                            H[unknown_point1, unknown_point2] += h_factor
-                        else:
-                            unknown_ind = max(unknown_point1, unknown_point2)
-                            known_ind = min(unknown_point1, unknown_point2) + first_unknown_point_global
-                            d[unknown_ind] += h_factor * known_points[known_ind]
+                        unknown_ind = max(unknown_point1, unknown_point2)
+                        known_ind = min(unknown_point1, unknown_point2) + first_unknown_point_global
+                        d[unknown_ind] += c_factor * known_points[known_ind]
+
+    return energy_shift
 
 
 def build_qp_matrices(funcs, dx, known_points, max_considered_accuracy, points_per_step):
@@ -157,6 +168,7 @@ def build_qp_matrices(funcs, dx, known_points, max_considered_accuracy, points_p
     Returns:
         H (numpy.ndarray (2D)): Quadratic minimization matrix.
         d (numpy.ndarray (1D)): Quadratic minimization vector.
+        energy_shift (float): Constant part of minimization functional.
     """
     first_unknown_point_global = known_points.shape[0]
     unknowns = min(points_per_step, funcs.shape[1] - first_unknown_point_global)
@@ -166,10 +178,11 @@ def build_qp_matrices(funcs, dx, known_points, max_considered_accuracy, points_p
     last_contributing_point = max(last_unknown_point_global - longest_scheme + 1, 0)
     H = np.zeros((unknowns, unknowns))
     d = np.zeros(unknowns)
+    energy_shift = 0
     for point_ind in range(first_contributing_point, last_contributing_point + 1):
-        add_linear_terms_qp(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_points, max_considered_accuracy)
-        add_quadratic_terms_qp(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_points, max_considered_accuracy)
-    return H, d
+        energy_shift += add_linear_terms_qp(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_points, max_considered_accuracy)
+        energy_shift += add_quadratic_terms_qp(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_points, max_considered_accuracy)
+    return 2*H, d, energy_shift
 
 
 def solve_ode_qp(system_terms, grid, known_points, max_considered_accuracy, points_per_step, **kwargs):
@@ -186,16 +199,20 @@ def solve_ode_qp(system_terms, grid, known_points, max_considered_accuracy, poin
 
     Returns:
         known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
+        errors (numpy.ndarray): 2D array with errors for each equation (rows) and each solved QP (columns).
     """
     known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
     funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
     dx = grid[1] - grid[0]
+    errors = [[] for i in range(system_terms.shape[0])]
     while known_points.shape[1] < len(grid):
         all_solution_points_list = []
         for eq_ind in range(system_terms.shape[0]):
-            H, d = build_qp_matrices(funcs[eq_ind, :, :], dx, known_points[eq_ind, :], max_considered_accuracy, points_per_step)
-            solution_points = qpsolvers.solve_qp(2 * H, d)
+            H, d, energy_shift = build_qp_matrices(funcs[eq_ind, :, :], dx, known_points[eq_ind, :], max_considered_accuracy, points_per_step)
+            solution_points = qpsolvers.solve_qp(H, d)
+            error = np.dot(np.matmul(solution_points, H), solution_points) / 2 + np.dot(solution_points, d) + energy_shift
             all_solution_points_list.append(solution_points)
+            errors[eq_ind].append(error)
 
         all_solution_points = np.array(all_solution_points_list)
         known_points = np.hstack((known_points, all_solution_points))
@@ -203,7 +220,7 @@ def solve_ode_qp(system_terms, grid, known_points, max_considered_accuracy, poin
         update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
         funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
 
-    return known_points
+    return known_points, np.array(errors)
 
 
 def real_to_bits(num, bits_integer, bits_decimal):
@@ -256,22 +273,24 @@ def add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs_i, dx, 
         bits_decimal (int): Number of bits to represent decimal part of coefficients.
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
     """
+    energy_shift = funcs_i[0] ** 2
     bits_per_point = bits_integer + bits_decimal
     first_unknown_point_global = int(len(known_bits) / bits_per_point)
-    for deriv_ind in reversed(range(1, len(funcs_i))):
+    for deriv_ind in range(1, len(funcs_i)):
         deriv_order, accuracy_order, scheme_length, last_scheme_point_global = get_deriv_range(deriv_ind, point_ind, last_unknown_point_global, max_considered_accuracy)
-        if last_scheme_point_global < first_unknown_point_global:
-            break
         coeffs = get_finite_difference_coefficients(deriv_order, accuracy_order)
         func_factor = 2 * funcs_i[0] * funcs_i[deriv_ind] / dx ** deriv_order
-        for scheme_point in reversed(range(scheme_length)):
-            unknown_point = point_ind + scheme_point - first_unknown_point_global
-            if unknown_point < 0:
-                break
+        for scheme_point in range(scheme_length):
+            c_factor = func_factor * coeffs[scheme_point]
+            scheme_point_global = point_ind + scheme_point
+            if scheme_point_global < first_unknown_point_global:
+                energy_shift += c_factor * bits_to_real(known_bits[scheme_point_global * bits_per_point : (scheme_point_global + 1) * bits_per_point], bits_integer)
             else:
+                energy_shift -= c_factor * 2 ** (bits_integer - 1)
+                unknown_point = scheme_point_global - first_unknown_point_global
                 for unknown_bit in range(unknown_point * bits_per_point, (unknown_point + 1) * bits_per_point):
                     j = unknown_bit - unknown_point * bits_per_point - bits_integer + 1
-                    d[unknown_bit] += func_factor * coeffs[scheme_point] * 2 ** (-j)
+                    d[unknown_bit] += c_factor * 2 ** (-j)
 
 
 def add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs_i, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy):

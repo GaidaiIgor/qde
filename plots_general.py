@@ -25,7 +25,11 @@ def filter_kwargs_plot(kwargs):
     return {key: value for key, value in kwargs.items() if key in known_keys}
 
 
-def my_plot(x, y, axes=None, marker='.', **kwargs):
+def my_plot(x, y=None, axes=None, marker='.', **kwargs):
+    if y is None:
+        y = x
+        x = list(range(len(y)))
+
     axes = get_axes(axes)
     axes.plot(x, y, marker=marker, markersize=10, **filter_kwargs_plot(kwargs))
     handles = axes.get_legend_handles_labels()[0]

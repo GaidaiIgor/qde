@@ -158,11 +158,10 @@ def get_analytical_solution(problem=0, N=1000, time_max=300, initial_position=1.
     return grid, solution_vals
 
 
-def get_qp_solution(problem, N=100, time_max=300, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
-    """Plots QP solution of a given problem in r-t space."""
+def get_qp_solution(problem, N=100, time_max=400, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
     grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution = qde.solve_ode_qp(system_terms, grid, solution, max_considered_accuracy, points_per_step, **kwargs)
-    return grid, solution
+    solution, errors = qde.solve_ode_qp(system_terms, grid, solution, max_considered_accuracy, points_per_step, **kwargs)
+    return grid, solution, errors
 
 
 def get_sampler(sampler_name):
@@ -182,8 +181,9 @@ def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_i
 
 
 def main():
-    _, solution, _ = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
-    np.savetxt('solution.txt', solution)
+    grid, sln, errors = get_qp_solution(problem=21, N=200)
+    # _, solution, _ = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
+    # np.savetxt('solution.txt', solution)
 
 
 if __name__ == '__main__':
