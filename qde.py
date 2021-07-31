@@ -13,7 +13,7 @@ def get_finite_difference_coefficients(deriv_order, accuracy_order):
         accuracy_order (int): Order of accuracy.
 
     Returns:
-        numpy.ndarray (1D): Coefficients of selected scheme.
+        numpy.ndarray: 1D array of coefficients of selected scheme.
     """
     assert accuracy_order >= 0, 'Not enough known points'
 
@@ -367,7 +367,7 @@ def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_con
     return Q
 
 
-def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, **kwargs):
+def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts=1, restart_tolerance=0.05, **kwargs):
     """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
 
     Args:
@@ -380,6 +380,8 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
         points_per_step (int): Number of points to vary in the problem, defined by this matrix.
         sampler (dimod.core.Sampler): Sampler to use.
+        max_attempts (int): Maximum number of times each QUBO can be solved (restarts can find a better solution).
+        restart_tolerance (float): Allowed increase in energy relative to the predicted value.
         kwargs (dict): Sampler parameters.
 
     Returns:
@@ -391,31 +393,28 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
     known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
     funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
     dx = grid[1] - grid[0]
+    energies = [[] for i in range(system_terms.shape[0])]
     while known_points.shape[1] < len(grid):
         all_solution_bits_list = []
         all_solution_points_list = []
         for eq_ind in range(system_terms.shape[0]):
-            Q = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
-            job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}'
-            sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
-            samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
+            lowest_energy = np.inf
+            for attempt in range(max_attempts):
+                Q = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
+                job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}; Attempt {attempt + 1}'
+                sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
+                samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
+                solution_bits = samples_plain[0, :]
+                solution_energy = sample_set.data_vectors['energy'][0]
 
-            # Best sample
-            solution_bits = samples_plain[0, :]
+                # if max_attempts > 0:
 
-            # print(f'Energy {sample_set.first.energy}, found {sample_set.first.num_occurrences} times')
 
-            # # Average sample
-            # num_occurrences = sample_set.data_vectors['num_occurrences']
-            # sample_points = np.array([bits_to_real(bits, bits_integer) for bits in samples_plain])
-            # average_point = np.dot(sample_points, num_occurrences / sum(num_occurrences))
-            # solution_bits = real_to_bits(average_point, bits_integer, bits_decimal)
-
-            all_solution_bits_list.append(solution_bits)
-
-            solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
-            solution_points = np.array([bits_to_real(row_bits, bits_integer) for row_bits in solution_bits_shaped])
-            all_solution_points_list.append(solution_points)
+                all_solution_bits_list.append(solution_bits)
+                solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
+                solution_points = np.array([bits_to_real(row_bits, bits_integer) for row_bits in solution_bits_shaped])
+                all_solution_points_list.append(solution_points)
+                energies[-1].append(solution_energy)
 
         all_solution_bits = np.array(all_solution_bits_list)
         all_solution_points = np.array(all_solution_points_list)
@@ -425,4 +424,5 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
         update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
         funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
 
-    return known_points
+    energies = np.array(energies).T
+    return known_points, energies

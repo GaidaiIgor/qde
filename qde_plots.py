@@ -1,3 +1,4 @@
+import addcopyfighandler
 import findiff
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -5,7 +6,9 @@ import numpy as np
 from cycler import cycler
 
 from plots_general import my_plot, my_scatter
-from test_core import Hydrogen
+from test_core import Hydrogen, get_analytical_solution, get_qubo_solution
+
+addcopyfighandler.dummy_use = 1
 
 
 def plot_potential_harmonic(**kwargs):
@@ -44,6 +47,14 @@ def plot_solution_tr(t, r, **kwargs):
     return axes
 
 
+def plot_solution_rp(r, p, **kwargs):
+    # axes = my_scatter(r, p, **kwargs)
+    axes = my_plot(r, p, **kwargs)
+    axes.set_xlabel('r, a.u.')
+    axes.set_ylabel('p, a.u.')
+    return axes
+
+
 def plot_solution_rp_tr(t, r, **kwargs):
     dt = t[1] - t[0]
     d_dt = findiff.FinDiff(0, dt)
@@ -51,11 +62,9 @@ def plot_solution_rp_tr(t, r, **kwargs):
     return plot_solution_rp(r, p, **kwargs)
 
 
-def plot_solution_rp(r, p, **kwargs):
-    axes = my_scatter(r, p, **kwargs)
-    axes.set_xlabel('r, a.u.')
-    axes.set_ylabel('p, a.u.')
-    return axes
+def plot_solution_rp_file(file_path='solution.txt', **kwargs):
+    solution = np.loadtxt(file_path)
+    return plot_solution_rp(solution[0, :], solution[1, :], **kwargs)
 
 
 def plot_error(solution_n, true_answer_n, Ns=None, **kwargs):
