@@ -272,6 +272,9 @@ def add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs_i, dx, 
         bits_integer (int): Number of bits to represent integer part of coefficients.
         bits_decimal (int): Number of bits to represent decimal part of coefficients.
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+
+    Returns:
+        energy_shift (float): Constant part of minimization functional.
     """
     energy_shift = funcs_i[0] ** 2
     bits_per_point = bits_integer + bits_decimal
@@ -283,14 +286,17 @@ def add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs_i, dx, 
         for scheme_point in range(scheme_length):
             c_factor = func_factor * coeffs[scheme_point]
             scheme_point_global = point_ind + scheme_point
-            if scheme_point_global < first_unknown_point_global:
-                energy_shift += c_factor * bits_to_real(known_bits[scheme_point_global * bits_per_point : (scheme_point_global + 1) * bits_per_point], bits_integer)
+            unknown_point = scheme_point_global - first_unknown_point_global
+            if unknown_point < 0:
+                point = bits_to_real(known_bits[scheme_point_global * bits_per_point : (scheme_point_global + 1) * bits_per_point], bits_integer)
+                energy_shift += c_factor * point
             else:
                 energy_shift -= c_factor * 2 ** (bits_integer - 1)
-                unknown_point = scheme_point_global - first_unknown_point_global
                 for unknown_bit in range(unknown_point * bits_per_point, (unknown_point + 1) * bits_per_point):
                     j = unknown_bit - unknown_point * bits_per_point - bits_integer + 1
                     d[unknown_bit] += c_factor * 2 ** (-j)
+
+    return energy_shift
 
 
 def add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs_i, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy):
@@ -307,35 +313,50 @@ def add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs_i
         bits_integer (int): Number of bits to represent integer part of coefficients.
         bits_decimal (int): Number of bits to represent decimal part of coefficients.
         max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+
+    Returns:
+        energy_shift (float): Constant part of minimization functional.
     """
+    energy_shift = 0
     bits_per_point = bits_integer + bits_decimal
     first_unknown_point_global = int(len(known_bits) / bits_per_point)
-    for deriv_ind1 in reversed(range(1, len(funcs_i))):
+    for deriv_ind1 in range(1, len(funcs_i)):
         deriv_order1, accuracy_order1, scheme_length1, last_scheme_point_global1 = get_deriv_range(deriv_ind1, point_ind, last_unknown_point_global, max_considered_accuracy)
         coeffs1 = get_finite_difference_coefficients(deriv_order1, accuracy_order1)
-        for deriv_ind2 in reversed(range(1, len(funcs_i))):
+        for deriv_ind2 in range(1, len(funcs_i)):
             deriv_order2, accuracy_order2, scheme_length2, last_scheme_point_global2 = get_deriv_range(deriv_ind2, point_ind, last_unknown_point_global, max_considered_accuracy)
-            if last_scheme_point_global1 < first_unknown_point_global and last_scheme_point_global2 < first_unknown_point_global:
-                break
             coeffs2 = get_finite_difference_coefficients(deriv_order2, accuracy_order2)
             func_factor = funcs_i[deriv_ind1] * funcs_i[deriv_ind2] / dx ** (deriv_order1 + deriv_order2)
-            for scheme_point1 in reversed(range(scheme_length1)):
-                unknown_point1 = point_ind + scheme_point1 - first_unknown_point_global
-                for scheme_point2 in reversed(range(scheme_length2)):
-                    unknown_point2 = point_ind + scheme_point2 - first_unknown_point_global
+            for scheme_point1 in range(scheme_length1):
+                scheme_point_global1 = point_ind + scheme_point1
+                unknown_point1 = scheme_point_global1 - first_unknown_point_global
+                for scheme_point2 in range(scheme_length2):
+                    scheme_point_global2 = point_ind + scheme_point2
+                    unknown_point2 = scheme_point_global2 - first_unknown_point_global
+                    c_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
                     if unknown_point1 < 0 and unknown_point2 < 0:
-                        break
+                        point1 = bits_to_real(known_bits[scheme_point_global1 * bits_per_point : (scheme_point_global1 + 1) * bits_per_point], bits_integer)
+                        point2 = bits_to_real(known_bits[scheme_point_global2 * bits_per_point : (scheme_point_global2 + 1) * bits_per_point], bits_integer)
+                        energy_shift += c_factor * point1 * point2
                     else:
-                        c_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
+                        energy_shift += c_factor * 4 ** (bits_integer - 1)
                         if unknown_point1 >= 0:
                             for unknown_bit in range(unknown_point1 * bits_per_point, (unknown_point1 + 1) * bits_per_point):
                                 j = unknown_bit - unknown_point1 * bits_per_point - bits_integer + 1
                                 d[unknown_bit] -= c_factor * 2 ** (bits_integer - 1 - j)
+                        else:
+                            for known_bit in range(scheme_point_global1 * bits_per_point, (scheme_point_global1 + 1) * bits_per_point):
+                                j = known_bit - scheme_point_global1 * bits_per_point - bits_integer + 1
+                                energy_shift -= c_factor * 2 ** (bits_integer - 1 - j) * known_bits[known_bit]
 
                         if unknown_point2 >= 0:
                             for unknown_bit in range(unknown_point2 * bits_per_point, (unknown_point2 + 1) * bits_per_point):
                                 j = unknown_bit - unknown_point2 * bits_per_point - bits_integer + 1
                                 d[unknown_bit] -= c_factor * 2 ** (bits_integer - 1 - j)
+                        else:
+                            for known_bit in range(scheme_point_global2 * bits_per_point, (scheme_point_global2 + 1) * bits_per_point):
+                                j = known_bit - scheme_point_global2 * bits_per_point - bits_integer + 1
+                                energy_shift -= c_factor * 2 ** (bits_integer - 1 - j) * known_bits[known_bit]
 
                         if unknown_point1 >= 0 and unknown_point2 >= 0:
                             for unknown_bit1 in range(unknown_point1 * bits_per_point, (unknown_point1 + 1) * bits_per_point):
@@ -351,6 +372,8 @@ def add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs_i
                                 for known_bit in range(known_point_global * bits_per_point, (known_point_global + 1) * bits_per_point):
                                     j2 = known_bit - known_point_global * bits_per_point - bits_integer + 1
                                     d[unknown_bit] += c_factor * known_bits[known_bit] * 2 ** -(j1 + j2)
+
+    return energy_shift
 
 
 def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy, points_per_step):
@@ -368,6 +391,7 @@ def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_con
 
     Returns:
         Q (numpy.ndarray (2D)): QUBO matrix.
+        energy_shift (float): Constant part of minimization functional.
     """
     bits_per_point = bits_integer + bits_decimal
     first_unknown_point_global = int(len(known_bits) / bits_per_point)
@@ -379,11 +403,12 @@ def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_con
     last_contributing_point = max(last_unknown_point_global - longest_scheme + 1, 0)
     H = np.zeros((unknown_bits, unknown_bits))
     d = np.zeros(unknown_bits)
+    energy_shift = 0
     for point_ind in range(first_contributing_point, last_contributing_point + 1):
-        add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
-        add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
+        energy_shift += add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
+        energy_shift += add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
     Q = H + np.diag(d)
-    return Q
+    return Q, energy_shift
 
 
 def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts=1, restart_tolerance=0.05, **kwargs):
@@ -405,6 +430,7 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
 
     Returns:
         known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
+        errors (numpy.ndarray): 2D array with errors for each equation (rows) and each solved QUBO (columns).
     """
     known_points = np.vectorize(lambda num: bits_to_real(real_to_bits(num, bits_integer, bits_decimal), bits_integer))(known_points)
     bits_per_point = bits_integer + bits_decimal
@@ -412,28 +438,25 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
     known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
     funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
     dx = grid[1] - grid[0]
-    energies = [[] for i in range(system_terms.shape[0])]
+    errors = [[] for i in range(system_terms.shape[0])]
     while known_points.shape[1] < len(grid):
         all_solution_bits_list = []
         all_solution_points_list = []
         for eq_ind in range(system_terms.shape[0]):
             lowest_energy = np.inf
             for attempt in range(max_attempts):
-                Q = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
+                Q, energy_shift = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
                 job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}; Attempt {attempt + 1}'
                 sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
                 samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
                 solution_bits = samples_plain[0, :]
                 solution_energy = sample_set.data_vectors['energy'][0]
 
-                # if max_attempts > 0:
-
-
                 all_solution_bits_list.append(solution_bits)
                 solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
                 solution_points = np.array([bits_to_real(row_bits, bits_integer) for row_bits in solution_bits_shaped])
                 all_solution_points_list.append(solution_points)
-                energies[-1].append(solution_energy)
+                errors[eq_ind].append(solution_energy + energy_shift)
 
         all_solution_bits = np.array(all_solution_bits_list)
         all_solution_points = np.array(all_solution_points_list)
@@ -443,5 +466,4 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
         update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
         funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
 
-    energies = np.array(energies).T
-    return known_points, energies
+    return known_points, np.array(errors)

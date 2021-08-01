@@ -176,12 +176,13 @@ def get_sampler(sampler_name):
 def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_integer=6, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, sampler_name='qbsolv', **kwargs):
     grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
     sampler = get_sampler(sampler_name)
-    solution, energies = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, **kwargs)
-    return grid, solution, energies
+    solution, errors = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, **kwargs)
+    return grid, solution, errors
 
 
 def main():
-    grid, sln, errors = get_qp_solution(problem=21, N=200)
+    grid, sln, errors = get_qubo_solution(problem=21, N=200)
+
     # _, solution, _ = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
     # np.savetxt('solution.txt', solution)
 
