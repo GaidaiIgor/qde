@@ -173,18 +173,20 @@ def get_sampler(sampler_name):
         raise Exception('Unknown sampler name')
 
 
-def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_integer=6, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, sampler_name='qbsolv', **kwargs):
+def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_integer=6, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, sampler_name='qbsolv', max_attempts=1,
+                      max_error=1e-5, **kwargs):
     grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
     sampler = get_sampler(sampler_name)
-    solution, errors = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, **kwargs)
+    solution, errors = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts, max_error, **kwargs)
     return grid, solution, errors
 
 
 def main():
-    grid, sln, errors = get_qubo_solution(problem=21, N=200)
+    # grid, sln, errors = get_qubo_solution(problem=21, N=200)
 
-    # _, solution, _ = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
-    # np.savetxt('solution.txt', solution)
+    _, solution, error = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='dwave', max_attempts=5, max_error=1e-5, num_reads=10000)
+    np.savetxt('solution.txt', solution)
+    np.savetxt('error.txt', error)
 
 
 if __name__ == '__main__':

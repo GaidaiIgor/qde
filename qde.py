@@ -411,7 +411,7 @@ def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_con
     return Q, energy_shift
 
 
-def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts=1, max_error=1e-5, **kwargs):
+def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts, max_error, **kwargs):
     """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
 
     Args:
