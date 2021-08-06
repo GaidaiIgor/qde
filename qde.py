@@ -451,12 +451,13 @@ def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal,
                     job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}; Attempt {attempt + 1}'
                     sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
                     samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
-                    solution_error = sample_set.data_vectors['energy'][0] + energy_shift
+                    trial_bits = samples_plain[0, :]
+                    solution_error = np.dot(np.matmul(trial_bits, Q), trial_bits) + energy_shift
                     log.write(f'{job_label}; Error {solution_error}\n')
 
                     if solution_error < lowest_error:
                         lowest_error = solution_error
-                        solution_bits = samples_plain[0, :]
+                        solution_bits = trial_bits
 
                     if solution_error < max_error:
                         break

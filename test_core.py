@@ -182,9 +182,9 @@ def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_i
 
 
 def main():
-    # grid, sln, errors = get_qubo_solution(problem=21, N=200)
+    # grid, sln, errors = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='qbsolv', num_repeats=100)
 
-    _, solution, error = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='dwave', max_attempts=5, max_error=1e-5, num_reads=10000)
+    _, solution, error = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='dwave', max_attempts=10, max_error=5e-10, num_reads=10000)
     np.savetxt('solution.txt', solution)
     np.savetxt('error.txt', error)
 
