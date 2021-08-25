@@ -12,7 +12,7 @@ addcopyfighandler.dummy_use = 1
 
 
 def plot_potential_harmonic(**kwargs):
-    equilibrium, force = (Hydrogen.equilibrium, Hydrogen.force)
+    equilibrium, force = (Hydrogen.equilibrium, Hydrogen.force_const)
     grid = np.linspace(-0.2, 0.2, 100) + equilibrium
     pot = force * (grid - equilibrium) ** 2
     axes = my_plot(grid, pot / Constants.eh_per_cm_1, **kwargs)
@@ -89,15 +89,18 @@ def main():
     np.set_printoptions(precision=15, linewidth=200)
     mpl.rcParams['axes.prop_cycle'] = cycler(color='brgkcmy')
 
-    grid, solution = get_analytical_solution(problem=21, N=1600, time_max=400)
+    grid, solution = get_analytical_solution(problem=22, N=1600, time_max=400)
     axes = plot_solution_rp_tr(grid, solution)
 
-    _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='qbsolv', num_repeats=100)
-    axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
+    grid, sln, errors = get_qp_solution(problem=22, N=50, time_max=400)
+    axes = plot_solution_rp(sln[0, :], sln[1, :], axes=axes)
 
-    _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
-    np.savetxt('solution.txt', solution)
-    axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
+    # _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='qbsolv', num_repeats=100)
+    # axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
+    #
+    # _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
+    # np.savetxt('solution.txt', solution)
+    # axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
 
     if not mpl.is_interactive():
         plt.show()

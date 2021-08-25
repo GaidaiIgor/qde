@@ -1,226 +1,168 @@
 """This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer.
 """
-import findiff
 import numpy as np
 import qpsolvers
 
 
-def get_finite_difference_coefficients(deriv_order, accuracy_order):
-    """Returns coefficients of a given forward finite difference scheme.
+def add_symmetric(H, ind1, ind2, value):
+    """Splits specified value between the two off-diagonals of H.
 
     Args:
-        deriv_order (int): Order of derivative.
-        accuracy_order (int): Order of accuracy.
-
-    Returns:
-        numpy.ndarray: 1D array of coefficients of selected scheme.
+        H (numpy.ndarray): Matrix to which value is added.
+        ind1 (int): first index of position in H where value is added.
+        ind2 (int): second index of position in H where value is added.
+        value (float): value to add.
     """
-    assert accuracy_order >= 0, 'Not enough known points'
-
-    if deriv_order == 0:
-        return np.array([1])
-
-    elif accuracy_order % 2 == 0:
-        ans = findiff.coefficients(deriv_order, accuracy_order)['forward']
-        return ans['coefficients']
-
-    else:
-        coeffs = None
-        if accuracy_order == 1:
-            if deriv_order == 1:
-                coeffs = np.array([-1, 1])
-            elif deriv_order == 2:
-                coeffs = np.array([1, -2, 1])
-
-        elif accuracy_order == 3:
-            if deriv_order == 1:
-                coeffs = np.array([-11/6, 3, -3/2, 1/3])
-            elif deriv_order == 2:
-                coeffs = np.array([35/12, -26/3, 19/2, -14/3, 11/12])
-
-        elif accuracy_order == 5:
-            if deriv_order == 1:
-                coeffs = np.array([-137/60, 5, -5, 10/3, -5/4, 1/5])
-            elif deriv_order == 2:
-                coeffs = np.array([203/45, -87/5, 117/4, -254/9, 33/2, -27/5, 137/180])
-
-        if coeffs is None:
-            raise NotImplementedError('Not implemented combination of derivative and accuracy orders')
-        else:
-            return coeffs
+    H[ind1, ind2] += value / 2
+    H[ind2, ind1] += value / 2
 
 
-def get_deriv_range(deriv_ind, point_ind, last_point_ind, max_considered_accuracy):
-    """Returns derivative order, accuracy order, shift and first point index of a given derivative term.
+def add_point_terms_qp(H, d, point_ind, funcs_i, dx, known_points=None):
+    """Adds functional terms for a given point to H and d.
 
     Args:
-        deriv_ind (int): Index of term in DE equation.
-        point_ind (int): Global index of point for which derivative range is requested.
-        last_point_ind (int): Maximum global point index eligible to be included in a given scheme.
-        max_considered_accuracy (int): Maximum considered accuracy order for a finite difference scheme.
-
-    Returns:
-        deriv_order (int): Derivative order of this term.
-        selected_accuracy (int): Selected accuracy order for this term. If <1, then the remaining return values are invalid.
-        length (int): Number of points in the selected scheme.
-        last_scheme_ind_global (int): Global index of the last point in the selected scheme.
-    """
-    deriv_order = deriv_ind - 1
-    if deriv_order == 0:
-        selected_accuracy = 1
-    else:
-        max_possible_accuracy = last_point_ind - point_ind - deriv_order + 1
-        selected_accuracy = min(max_considered_accuracy, max_possible_accuracy)
-
-    length = deriv_order + selected_accuracy
-    last_scheme_ind_global = point_ind + length - 1
-    return deriv_order, selected_accuracy, length, last_scheme_ind_global
-
-
-def add_linear_terms_qp(d, point_ind, last_unknown_point_global, funcs_i, dx, known_points, max_considered_accuracy):
-    """Adds linear matrix elements resulting from linear terms of error functional for a given point.
-
-    Args:
-        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
-        point_ind (int): Global index of point for which the terms are to be calculated.
-        last_unknown_point_global (int): Global index of the last unknown variable included in a given calculation.
-        funcs_i (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. See `build_quadratic_minimization_matrices_general` for more details.
+        H (numpy.ndarray): Current quadratic minimization matrix to which quadratic terms of specified point are added.
+        d (numpy.ndarray): Current quadratic minimization vector to which linear terms of specified point are added.
+        point_ind (int): Local point index within the current job.
+        funcs_i (numpy.ndarray): 2D array with values of approximated rhs terms at the current point. Equations are along rows, terms along columns.
         dx (float): Grid step.
-        known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
-
-    Returns:
-        energy_shift (float): Constant part of minimization functional.
-    """
-    energy_shift = funcs_i[0] ** 2
-    first_unknown_point_global = known_points.shape[0]
-    for deriv_ind in range(1, len(funcs_i)):
-        deriv_order, accuracy_order, length, last_scheme_point_global = get_deriv_range(deriv_ind, point_ind, last_unknown_point_global, max_considered_accuracy)
-        coeffs = get_finite_difference_coefficients(deriv_order, accuracy_order)
-        func_factor = 2 * funcs_i[0] * funcs_i[deriv_ind] / dx ** deriv_order
-        for scheme_point in range(length):
-            c_factor = func_factor * coeffs[scheme_point]
-            scheme_point_global = point_ind + scheme_point
-            unknown_point = scheme_point_global - first_unknown_point_global
-            if unknown_point < 0:
-                energy_shift += c_factor * known_points[scheme_point_global]
-            else:
-                d[unknown_point] += c_factor
-
-    return energy_shift
-
-
-def add_quadratic_terms_qp(H, d, point_ind, last_unknown_point_global, funcs_i, dx, known_points, max_considered_accuracy):
-    """Adds linear and quadratic matrix elements resulting from quadratic terms of error functional for a given point.
-
-    Args:
-        H (numpy.ndarray (2D)): Current quadratic minimization matrix to which quadratic matrix elements of specified point are added.
-        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
-        point_ind (int): Global index of point for which the terms are to be calculated.
-        last_unknown_point_global (int): Global index of the last unknown variable included in a given calculation.
-        funcs_i (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. See `build_quadratic_minimization_matrices_general` for more details.
-        dx (float): Grid step.
-        known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
+        known_points (numpy.ndarray): When adding terms for the last known point, this is 1D array of the values of each function at that point, otherwise None.
 
     Returns:
         energy_shift (float): Constant part of minimization functional.
     """
     energy_shift = 0
-    first_unknown_point_global = known_points.shape[0]
-    for deriv_ind1 in range(1, len(funcs_i)):
-        deriv_order1, accuracy_order1, length1, last_scheme_point_global1 = get_deriv_range(deriv_ind1, point_ind, last_unknown_point_global, max_considered_accuracy)
-        coeffs1 = get_finite_difference_coefficients(deriv_order1, accuracy_order1)
-        for deriv_ind2 in range(1, len(funcs_i)):
-            deriv_order2, accuracy_order2, length2, last_scheme_point_global2 = get_deriv_range(deriv_ind2, point_ind, last_unknown_point_global, max_considered_accuracy)
-            coeffs2 = get_finite_difference_coefficients(deriv_order2, accuracy_order2)
-            func_factor = funcs_i[deriv_ind1] * funcs_i[deriv_ind2] / dx ** (deriv_order1 + deriv_order2)
-            for scheme_point1 in range(length1):
-                scheme_point_global1 = point_ind + scheme_point1
-                unknown_point1 = scheme_point_global1 - first_unknown_point_global
-                for scheme_point2 in range(length2):
-                    scheme_point_global2 = point_ind + scheme_point2
-                    unknown_point2 = scheme_point_global2 - first_unknown_point_global
-                    c_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
-                    if unknown_point1 < 0 and unknown_point2 < 0:
-                        energy_shift += c_factor * known_points[scheme_point_global1] * known_points[scheme_point_global2]
-                    elif unknown_point1 >= 0 and unknown_point2 >= 0:
-                        H[unknown_point1, unknown_point2] += c_factor
-                    else:
-                        unknown_ind = max(unknown_point1, unknown_point2)
-                        known_ind = min(unknown_point1, unknown_point2) + first_unknown_point_global
-                        d[unknown_ind] += c_factor * known_points[known_ind]
+    get_unknown_ind = lambda point, eq: (point - 1) * funcs_i.shape[0] + eq
+    for eq_ind in range(funcs_i.shape[0]):
+        next_unknown_ind = get_unknown_ind(point_ind + 1, eq_ind)
+        H[next_unknown_ind, next_unknown_ind] += 1 / dx ** 2
+        d[next_unknown_ind] += -2 * funcs_i[eq_ind, 0] / dx
+        energy_shift += funcs_i[eq_ind, 0] ** 2
+
+        if point_ind == 0:
+            # Current point is known
+            assert known_points is not None, 'known_points have to be supplied for 0th point in each job'
+            d[next_unknown_ind] += -2 * known_points[eq_ind] / dx ** 2
+            energy_shift += (known_points[eq_ind] / dx) ** 2
+            energy_shift += 2 * known_points[eq_ind] * funcs_i[eq_ind, 0] / dx
+            for term_ind in range(1, funcs_i.shape[1]):
+                d[next_unknown_ind] += -2 * funcs_i[eq_ind, term_ind] * known_points[term_ind - 1] / dx
+                energy_shift += 2 * funcs_i[eq_ind, term_ind] * known_points[term_ind - 1] * known_points[eq_ind] / dx
+                energy_shift += 2 * funcs_i[eq_ind, 0] * funcs_i[eq_ind, term_ind] * known_points[term_ind - 1]
+                for term_ind2 in range(1, funcs_i.shape[1]):
+                    energy_shift += funcs_i[eq_ind, term_ind] * funcs_i[eq_ind, term_ind2] * known_points[term_ind - 1] * known_points[term_ind2 - 1]
+        else:
+            unknown_ind = get_unknown_ind(point_ind, eq_ind)
+            add_symmetric(H, unknown_ind, next_unknown_ind, -2 / dx ** 2)
+            H[unknown_ind, unknown_ind] += 1 / dx ** 2
+            d[unknown_ind] += 2 * funcs_i[eq_ind, 0] / dx
+            for term_ind in range(1, funcs_i.shape[1]):
+                term_unknown_ind = get_unknown_ind(point_ind, term_ind - 1)
+                add_symmetric(H, term_unknown_ind, next_unknown_ind, -2 * funcs_i[eq_ind, term_ind] / dx)
+                add_symmetric(H, term_unknown_ind, unknown_ind, 2 * funcs_i[eq_ind, term_ind] / dx)
+                d[term_unknown_ind] += 2 * funcs_i[eq_ind, 0] * funcs_i[eq_ind, term_ind]
+                for term_ind2 in range(1, funcs_i.shape[1]):
+                    term_unknown_ind2 = get_unknown_ind(point_ind, term_ind2 - 1)
+                    add_symmetric(H, term_unknown_ind, term_unknown_ind2, funcs_i[eq_ind, term_ind] * funcs_i[eq_ind, term_ind2])
 
     return energy_shift
 
 
-def build_qp_matrices(funcs, dx, known_points, max_considered_accuracy, points_per_step):
-    """Builds matrices H and d that define quadratic minimization problem corresponding to a given n-th order differential equation using up to k-th order difference schemes.
+def build_qp_matrices(funcs, dx, known_points):
+    """Builds matrices H and d that define quadratic minimization problem corresponding to a given system of differential equations.
 
     Args:
-        funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. Functions are stored in rows. First row stores f (shift function).
-            Subsequent i-th row stores f_(i-1) (multiplier function of (i-1)-th derivative term). Number of columns is equal to number of function discretization points.
+        funcs (numpy.ndarray): 3D array with values of approximated rhs terms at all points of this job. 1st dim - equations, 2nd dim - terms, 3rd dim - points.
         dx (float): Grid step.
-        known_points (numpy.ndarray (1D)): Array of known points in solution (continuous from the left end).
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
-        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
+        known_points (numpy.ndarray): 1D array of known points for each function at 0th point (boundary condition).
 
     Returns:
         H (numpy.ndarray (2D)): Quadratic minimization matrix.
         d (numpy.ndarray (1D)): Quadratic minimization vector.
         energy_shift (float): Constant part of minimization functional.
     """
-    first_unknown_point_global = known_points.shape[0]
-    unknowns = min(points_per_step, funcs.shape[1] - first_unknown_point_global)
-    last_unknown_point_global = first_unknown_point_global + unknowns - 1
-    longest_scheme = funcs.shape[0] - 2 + max_considered_accuracy
-    first_contributing_point = max(first_unknown_point_global - longest_scheme + 1, 0)
-    last_contributing_point = max(last_unknown_point_global - longest_scheme + 1, 0)
+    unknowns = funcs.shape[0] * funcs.shape[2]
     H = np.zeros((unknowns, unknowns))
     d = np.zeros(unknowns)
     energy_shift = 0
-    for point_ind in range(first_contributing_point, last_contributing_point + 1):
-        energy_shift += add_linear_terms_qp(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_points, max_considered_accuracy)
-        energy_shift += add_quadratic_terms_qp(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_points, max_considered_accuracy)
+    for point_ind in range(funcs.shape[2]):
+        energy_shift += add_point_terms_qp(H, d, point_ind, funcs[:, :, point_ind], dx, known_points)
     return 2*H, d, energy_shift
 
 
-def solve_ode_qp(system_terms, grid, known_points, max_considered_accuracy, points_per_step, **kwargs):
-    """Solves a given ODE system, defined by de_terms and known_points, by formulating it as a QP problem. Different equations are propagated one after another sequentially, not simultaneously.
+def calculate_term_coefficients(system_terms, approximation_point, sampling_steps, grid):
+    """Linearly approximates system rhs in the vicinity of a given point.
 
     Args:
-        system_terms (numpy.ndarray): 2D array of functions that define terms of a given system of differential equations. Rows - equations, columns - terms.
-            Each term is a function that accepts x as first argument, and the values of all other functions in the order they are specified in system_terms as subsequent arguments.
-        grid (numpy.ndarray): 1D Array of equidistant grid points.
-        known_points (numpy.ndarray): 2D array of known points for each function in the system. Rows - equations, columns - points.
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is used if number of points is not sufficient.
-        points_per_step (int): Number of points to vary in a single QP problem.
-        kwargs (dict): args for QBSolv().sample_qubo.
+        system_terms (numpy.ndarray): 1D array of functions that define rhs of each ODE in the system. Each function is linearly approximated within a given job.
+        approximation_point (numpy.ndarray): 1D array that specifies coordinate around which linear approximation is made.
+        sampling_steps (numpy.ndarray): 1D array of steps along each coordinate where additional points are sampled for linear fitting.
+        grid (numpy.ndarray): 1D array of x values for which the system terms are evaluated.
 
     Returns:
-        known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
-        errors (numpy.ndarray): 2D array with errors for each equation (rows) and each solved QP (columns).
+        funcs (numpy.ndarray): 3D array with values of approximated rhs terms at all points of this job. 1st dim - equations, 2nd dim - terms, 3rd dim - points.
     """
-    known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
-    funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
+    funcs = np.zeros((len(system_terms), 1 + len(system_terms), len(grid)))
+    if len(grid) == 1:
+        # Only shifts need to be calculated
+        for eq_ind in range(funcs.shape[0]):
+            funcs[eq_ind, 0, 0] = system_terms[eq_ind](grid[0], *approximation_point)
+    else:
+        fitting_matrix = np.zeros((funcs.shape[1], funcs.shape[1]))
+        for row_ind in range(funcs.shape[1]):
+            next_point = approximation_point.copy()
+            if row_ind > 0:
+                next_point[row_ind - 1] += sampling_steps[row_ind - 1]
+            fitting_matrix[row_ind, :] = [1, *next_point]
+
+        for eq_ind in range(funcs.shape[0]):
+            for point_ind in range(funcs.shape[2]):
+                fitting_vector = np.zeros(funcs.shape[1])
+                for row_ind in range(funcs.shape[1]):
+                    next_point = approximation_point.copy()
+                    if row_ind > 0:
+                        next_point[row_ind - 1] += sampling_steps[row_ind - 1]
+                    fitting_vector[row_ind] = system_terms[eq_ind](grid[point_ind], *next_point)
+                funcs[eq_ind, :, point_ind] = np.linalg.solve(fitting_matrix, fitting_vector)
+    return funcs
+
+
+def solve_ode_qp(system_terms, grid, boundary_condition, points_per_step):
+    """Solves a given ODE system, defined by system_terms and known_points, by formulating it as a QP problem.
+
+    Args:
+        system_terms (numpy.ndarray): 1D array of functions that define rhs of each ODE in the system. Each function is linearly approximated within a given job.
+        grid (numpy.ndarray): 1D Array of equidistant grid points.
+        boundary_condition (numpy.ndarray): 1D array of initial values for each function in the system.
+        points_per_step (int): Number of points to vary per job.
+
+    Returns:
+        solution (numpy.ndarray): 2D array with solution for all functions at all points of grid.
+        errors (numpy.ndarray): 1D array with errors for each job.
+    """
+    solution = np.zeros((len(system_terms), len(grid)))
+    solution[:, 0] = boundary_condition
     dx = grid[1] - grid[0]
-    errors = [[] for i in range(system_terms.shape[0])]
-    while known_points.shape[1] < len(grid):
-        all_solution_points_list = []
-        for eq_ind in range(system_terms.shape[0]):
-            H, d, energy_shift = build_qp_matrices(funcs[eq_ind, :, :], dx, known_points[eq_ind, :], max_considered_accuracy, points_per_step)
-            solution_points = qpsolvers.solve_qp(H, d)
-            error = np.dot(np.matmul(solution_points, H), solution_points) / 2 + np.dot(solution_points, d) + energy_shift
-            all_solution_points_list.append(solution_points)
-            errors[eq_ind].append(error)
+    point_ind = 0
+    errors = []
+    working_grid = grid[:-1]
+    while point_ind < len(working_grid):
+        if point_ind == 0:
+            sampling_steps = np.zeros(len(system_terms))
+            funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind : point_ind + 1])
+        else:
+            sampling_steps = solution[:, point_ind] - solution[:, point_ind - 1]
+            sampling_steps[abs(sampling_steps) < 1e-10] = 1e-10  # Ensure non-zero steps
+            funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind : point_ind + points_per_step])
 
-        all_solution_points = np.array(all_solution_points_list)
-        known_points = np.hstack((known_points, all_solution_points))
-        # Update funcs
-        update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
-        funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
+        H, d, energy_shift = build_qp_matrices(funcs, dx, solution[:, point_ind])
+        solution_points = qpsolvers.solve_qp(H, d)
+        errors.append(np.dot(np.matmul(solution_points, H), solution_points) / 2 + np.dot(solution_points, d) + energy_shift)
+        solution_points_shaped = np.reshape(solution_points, (len(system_terms), funcs.shape[2]), order='F')
+        solution[:, point_ind + 1 : point_ind + funcs.shape[2] + 1] = solution_points_shaped
+        point_ind += funcs.shape[2]
 
-    return known_points, np.array(errors)
+    return solution, np.array(errors)
 
 
 def real_to_bits(num, bits_integer, bits_decimal):

@@ -19,11 +19,15 @@ class Hydrogen:
     mu = 1.00782503207 * Constants.me_per_amu / 2  # Reduced mass
     freq = 4342 * Constants.eh_per_cm_1
     dissociation_energy = 4.52 * Constants.eh_per_ev
-    force = mu * freq ** 2
+    force_const = mu * freq ** 2
 
     @staticmethod
     def get_harmonic_period():
         return np.pi * np.sqrt(2) / Hydrogen.freq
+
+    @staticmethod
+    def get_force_harmonic(r):
+        return -2 * Hydrogen.force_const * (r - Hydrogen.equilibrium)
 
     @staticmethod
     def harmonic_trajectory(initial_position, initial_speed, t):
@@ -32,7 +36,7 @@ class Hydrogen:
 
     @staticmethod
     def get_morse_a():
-        return np.sqrt(Hydrogen.force / 2 / Hydrogen.dissociation_energy)
+        return np.sqrt(Hydrogen.force_const / 2 / Hydrogen.dissociation_energy)
 
     @staticmethod
     def get_potential_morse(r):
@@ -81,7 +85,7 @@ def get_problem(problem, **kwargs):
         system_terms[0, 0] = lambda x, y: -np.exp(x)
         system_terms[0, 1] = lambda x, y: 0
         system_terms[0, 2] = lambda x, y: 1
-        known_points = np.exp(grid[0:1])
+        boundary_condition = np.exp(grid[0:1])
         solution = lambda x: np.exp(x)
 
     elif problem == 1:
@@ -98,7 +102,22 @@ def get_problem(problem, **kwargs):
         system_terms[0, 3] = lambda x, y: 1
         initial_position = 1.3
         initial_speed = 0
-        known_points = np.array([initial_position, initial_position + initial_speed])
+        boundary_condition = np.array([initial_position, initial_position + initial_speed])
+        solution = lambda t: Hydrogen.harmonic_trajectory(initial_position, initial_speed, t)
+
+    elif problem == 12:
+        # Same as 1, but as a system of first-order equations, new version
+        N = kwargs['N']
+        initial_position = kwargs['initial_position']
+        w = Hydrogen.freq
+        period = Hydrogen.get_harmonic_period()
+        grid = np.linspace(0, period, N)
+
+        system_terms = np.empty(2, dtype=object)
+        system_terms[0] = lambda t, r, p: p / Hydrogen.mu
+        system_terms[1] = lambda t, r, p: Hydrogen.get_force_harmonic(r)
+
+        boundary_condition = np.array([initial_position, 0])
         solution = lambda t: Hydrogen.harmonic_trajectory(initial_position, initial_speed, t)
 
     elif problem == 2:
@@ -108,7 +127,7 @@ def get_problem(problem, **kwargs):
         N = kwargs.get('N', 1001)
         initial_position = kwargs.get('initial_position', 1.3)
         grid = np.linspace(0, time_max, N)
-        known_points = np.array([initial_position, initial_position])[np.newaxis, :]
+        boundary_condition = np.array([initial_position, initial_position])[np.newaxis, :]
 
         De = Hydrogen.dissociation_energy
         a = Hydrogen.get_morse_a()
@@ -129,25 +148,34 @@ def get_problem(problem, **kwargs):
         N = kwargs.get('N', 1001)
         initial_position = kwargs.get('initial_position', 1.3)
         grid = np.linspace(0, time_max, N)
-        known_points = np.array([initial_position, 0])[:, np.newaxis]
-
-        De = Hydrogen.dissociation_energy
-        a = Hydrogen.get_morse_a()
-        m = Hydrogen.mu
-        re = Hydrogen.equilibrium
+        boundary_condition = np.array([initial_position, 0])[:, np.newaxis]
 
         system_terms = np.empty((2, 3), dtype=object)
-        system_terms[0, 0] = lambda t, r, p: -p / m
+        system_terms[0, 0] = lambda t, r, p: -p / Hydrogen.mu
         system_terms[1, 0] = lambda t, r, p: -Hydrogen.get_force_morse(r)
         system_terms[:, 1] = lambda t, r, p: 0
         system_terms[:, 2] = lambda t, r, p: 1
 
         solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
 
+    elif problem == 22:
+        # Same as 2, but as a system of first-order equations, new version
+        time_max = kwargs['time_max']
+        N = kwargs['N']
+        initial_position = kwargs['initial_position']
+        grid = np.linspace(0, time_max, N)
+
+        system_terms = np.empty(2, dtype=object)
+        system_terms[0] = lambda t, r, p: p / Hydrogen.mu
+        system_terms[1] = lambda t, r, p: Hydrogen.get_force_morse(r)
+
+        boundary_condition = np.array([initial_position, 0])
+        solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
+
     else:
         raise Exception('Unknown problem')
 
-    return grid, system_terms, known_points, solution
+    return grid, system_terms, boundary_condition, solution
 
 
 def get_analytical_solution(problem=0, N=1000, time_max=300, initial_position=1.3, **kwargs):
@@ -158,9 +186,9 @@ def get_analytical_solution(problem=0, N=1000, time_max=300, initial_position=1.
     return grid, solution_vals
 
 
-def get_qp_solution(problem, N=100, time_max=400, initial_position=1.3, max_considered_accuracy=1, points_per_step=1, **kwargs):
-    grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution, errors = qde.solve_ode_qp(system_terms, grid, solution, max_considered_accuracy, points_per_step, **kwargs)
+def get_qp_solution(problem, N=100, time_max=400, initial_position=1.3, points_per_step=1, **kwargs):
+    grid, system_terms, boundary_condition, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solution, errors = qde.solve_ode_qp(system_terms, grid, boundary_condition, points_per_step)
     return grid, solution, errors
 
 
@@ -182,11 +210,12 @@ def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_i
 
 
 def main():
+    grid, sln, errors = get_qp_solution(problem=22, N=200, time_max=400, points_per_step=4)
     # grid, sln, errors = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='qbsolv', num_repeats=100)
 
-    _, solution, error = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='dwave', max_attempts=10, max_error=5e-10, num_reads=10000)
-    np.savetxt('solution.txt', solution)
-    np.savetxt('error.txt', error)
+    # _, solution, error = get_qubo_solution(problem=21, N=200, time_max=400, initial_position=1.1, sampler_name='dwave', max_attempts=5, max_error=1e-10, num_reads=10000)
+    # np.savetxt('solution.txt', solution)
+    # np.savetxt('error.txt', error)
 
 
 if __name__ == '__main__':
