@@ -1,7 +1,188 @@
-"""This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer.
-"""
+"""This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer."""
+from dwave.system.composites import EmbeddingComposite
+from dwave.system.samplers import DWaveSampler
+from dwave_qbsolv import QBSolv
 import numpy as np
 import qpsolvers
+
+
+class QUBOSampler:
+    """Base class for implementations of QUBO sampling approaches."""
+
+    def sample_qubo(self, Q, label=''):
+        """Returns a sample set of found binary vectors that minimizes QUBO functional.
+
+        Args:
+            Q (numpy.ndarray): QUBO minimization matrix.
+            label (str): Optional sampling job label.
+
+        Returns:
+            sample_set (dimod.SampleSet): Sample set of found binary vectors that minimizes QUBO functional.
+        """
+        raise NotImplementedError("Not implemented in base class")
+
+
+class QBSolvWrapper(QUBOSampler):
+    """Uses classical QBSolv sampling algorithm (probabilistic heuristic)."""
+
+    def __init__(self, num_repeats):
+        """Initializes instance.
+
+        Args:
+            num_repeats (int): Number of times to repeat sampling procedure to attempt to find a better solution.
+        """
+        self.num_repeats = num_repeats
+
+    def sample_qubo(self, Q, label=''):
+        """See base class."""
+        sample_set = QBSolv().sample_qubo(Q, label=label, num_repeats=self.num_repeats)
+        return sample_set
+
+
+class DWaveSamplerWrapper(QUBOSampler):
+    """Uses D-Wave quantum annealer for sampling."""
+
+    def __init__(self, num_reads):
+        """Initializes instance.
+
+        Args:
+            num_reads (int): Number of times ground state of qubits is read.
+        """
+        self.num_reads = num_reads
+
+    def sample_qubo(self, Q, label=''):
+        """See base class."""
+        sample_set = EmbeddingComposite(DWaveSampler()).sample_qubo(Q, label=label, num_reads=self.num_reads)
+        return sample_set
+
+
+class Solver:
+    """Base class for quadratic minimization solvers."""
+
+    def solve(self, H, d, job_label=''):
+        """Finds solution of quadratic minimization problem.
+
+        Args:
+            H (numpy.ndarray): Quadratic minimization matrix.
+            d (numpy.ndarray): Quadratic minimization vector.
+            job_label (str): Optional job label.
+
+        Returns:
+            solution (numpy.ndarray): 1D array that minimizes QP functional.
+        """
+        raise NotImplementedError("Not implemented in base class")
+
+
+class QPSolver(Solver):
+    """Solves quadratic minimization problem with real variables."""
+
+    def solve(self, H, d, job_label=''):
+        """See base class."""
+        solution = qpsolvers.solve_qp(2*H, d)
+        return solution
+
+
+class QUBOSolver(Solver):
+    """Solves quadratic minimization problem with binary variables."""
+
+    def __init__(self, bits_integer, bits_decimal, sampler):
+        """Initializes instance.
+
+        Args:
+            bits_integer (int): Number of binary variables used to represent integer part of a given real number.
+            bits_decimal (int): Number of binary variables used to represent decimal part of a given real number.
+            sampler (QUBOSampler): Sampler to use for QUBO sampling.
+        """
+        self.bits_integer = bits_integer
+        self.bits_decimal = bits_decimal
+        self.bits_total = bits_integer + bits_decimal
+        self.sampler = sampler
+
+    def get_discretization_matrix(self):
+        """Builds the discretization matrix for given number of bits in integer and decimal parts.
+
+        Returns:
+            numpy.ndarray: Discretization matrix.
+        """
+        j_range = range(-self.bits_integer + 1, self.bits_decimal + 1)
+        return np.reshape([2 ** -(j1 + j2) for j1 in j_range for j2 in j_range], (len(j_range), len(j_range)))
+
+    def get_discretization_vector(self):
+        """Builds the discretization vector for given number of bits in integer and decimal parts.
+
+        Returns:
+            numpy.ndarray: Discretization vector.
+        """
+        j_range = range(-self.bits_integer + 1, self.bits_decimal + 1)
+        return np.array([2 ** -j for j in j_range])
+
+    def real_to_bits(self, num):
+        """Returns the closest binary representation of a given real number.
+
+        Args:
+            num (float): Number to convert.
+
+        Returns:
+            bits (numpy.ndarray): 1D array of bits.
+        """
+        bits = np.zeros(self.bits_total, dtype=int)
+        represented = -2 ** (self.bits_integer - 1)
+        for i in range(len(bits)):
+            bit_value = 2 ** (self.bits_integer - 1 - i)
+            if represented + bit_value <= num:
+                bits[i] = 1
+                represented += bit_value
+        return bits
+
+    def bits_to_real(self, bits):
+        """Returns a real number represented by given binary representation.
+
+        Args:
+            bits (numpy.ndarray): 1D array of bits.
+
+        Returns:
+            num: Represented real number.
+        """
+        discretization_vector = self.get_discretization_vector()
+        return np.dot(bits, discretization_vector) - 2 ** (self.bits_integer - 1)
+
+    def convert_qp_matrices_to_qubo(self, H, d):
+        """Converts QP matrices to QUBO representation with given number of bits for integer and decimal parts.
+
+        Args:
+            H (numpy.ndarray): Quadratic minimization matrix.
+            d (numpy.ndarray): Quadratic minimization vector.
+
+        Returns:
+            Q (numpy.ndarray): Equivalent QUBO matrix.
+            energy_shift (float): Additional energy shift for QUBO formulation.
+        """
+        discretization_matrix = self.get_discretization_matrix()
+        discretization_vector = self.get_discretization_vector()
+        block_size = len(discretization_vector)
+        Q_size = block_size * len(d)
+        Q = np.zeros((Q_size, Q_size))
+        for i in range(H.shape[0]):
+            for j in range(i, H.shape[1]):
+                coeff = H[i, j] if i == j else 2 * H[i, j]
+                Q[i * block_size: (i + 1) * block_size, j * block_size: (j + 1) * block_size] += coeff * discretization_matrix
+                Q[range(i * block_size, (i + 1) * block_size), range(i * block_size, (i + 1) * block_size)] -= 2 ** (self.bits_integer - 1) * coeff * discretization_vector
+                Q[range(j * block_size, (j + 1) * block_size), range(j * block_size, (j + 1) * block_size)] -= 2 ** (self.bits_integer - 1) * coeff * discretization_vector
+                if i == j:
+                    Q[range(i * block_size, (i + 1) * block_size), range(i * block_size, (i + 1) * block_size)] += d[i] * discretization_vector
+
+        energy_shift = 4 ** (self.bits_integer - 1) * np.sum(H) - 2 ** (self.bits_integer - 1) * np.sum(d)
+        return Q, energy_shift
+
+    def solve(self, H, d, job_label=''):
+        """See base class."""
+        Q = self.convert_qp_matrices_to_qubo(H, d)[0]
+        sample_set = self.sampler.sample_qubo(Q, label=job_label)
+        samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution_real (all bits together), sorted by energy
+        solution_bits = samples_plain[0, :]
+        solution_bits_shaped = np.reshape(solution_bits, (H.shape[0], self.bits_total))
+        solution_real = np.array([self.bits_to_real(bits_row) for bits_row in solution_bits_shaped])
+        return solution_real
 
 
 def add_symmetric(H, ind1, ind2, value):
@@ -77,8 +258,8 @@ def build_qp_matrices(funcs, dx, known_points):
         known_points (numpy.ndarray): 1D array of known points for each function at 0th point (boundary condition).
 
     Returns:
-        H (numpy.ndarray (2D)): Quadratic minimization matrix.
-        d (numpy.ndarray (1D)): Quadratic minimization vector.
+        H (numpy.ndarray): Quadratic minimization matrix.
+        d (numpy.ndarray): Quadratic minimization vector.
         energy_shift (float): Constant part of minimization functional.
     """
     unknowns = funcs.shape[0] * funcs.shape[2]
@@ -87,7 +268,7 @@ def build_qp_matrices(funcs, dx, known_points):
     energy_shift = 0
     for point_ind in range(funcs.shape[2]):
         energy_shift += add_point_terms_qp(H, d, point_ind, funcs[:, :, point_ind], dx, known_points)
-    return 2*H, d, energy_shift
+    return H, d, energy_shift
 
 
 def calculate_term_coefficients(system_terms, approximation_point, sampling_steps, grid):
@@ -127,7 +308,7 @@ def calculate_term_coefficients(system_terms, approximation_point, sampling_step
     return funcs
 
 
-def solve_ode_qp(system_terms, grid, boundary_condition, points_per_step):
+def solve_ode(system_terms, grid, boundary_condition, points_per_step, solver, max_attempts, max_error):
     """Solves a given ODE system, defined by system_terms and known_points, by formulating it as a QP problem.
 
     Args:
@@ -135,9 +316,12 @@ def solve_ode_qp(system_terms, grid, boundary_condition, points_per_step):
         grid (numpy.ndarray): 1D Array of equidistant grid points.
         boundary_condition (numpy.ndarray): 1D array of initial values for each function in the system.
         points_per_step (int): Number of points to vary per job.
+        solver (Solver): Solver to solve QP problem.
+        max_attempts (int): Maximum number of times each problem can be solved (restarts can find a better solution for some solvers).
+        max_error (float): Maximum error that does not trigger restart.
 
     Returns:
-        solution (numpy.ndarray): 2D array with solution for all functions at all points of grid.
+        solution (numpy.ndarray): 2D array with solution for all functions at all grid points.
         errors (numpy.ndarray): 1D array with errors for each job.
     """
     solution = np.zeros((len(system_terms), len(grid)))
@@ -156,266 +340,21 @@ def solve_ode_qp(system_terms, grid, boundary_condition, points_per_step):
             funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind : point_ind + points_per_step])
 
         H, d, energy_shift = build_qp_matrices(funcs, dx, solution[:, point_ind])
-        solution_points = qpsolvers.solve_qp(H, d)
-        errors.append(np.dot(np.matmul(solution_points, H), solution_points) / 2 + np.dot(solution_points, d) + energy_shift)
+        lowest_error = np.inf
+        solution_points = np.zeros(len(d))
+        for attempt in range(max_attempts):
+            job_label = f'Point ind: {point_ind}; Attempt {attempt + 1}'
+            trial_points = solver.solve(H, d, job_label)
+            trial_error = np.dot(np.matmul(trial_points, H), trial_points) + np.dot(trial_points, d) + energy_shift
+            if trial_error < lowest_error:
+                lowest_error = trial_error
+                solution_points = trial_points
+            if trial_error < max_error:
+                break
+
+        errors.append(lowest_error)
         solution_points_shaped = np.reshape(solution_points, (len(system_terms), funcs.shape[2]), order='F')
         solution[:, point_ind + 1 : point_ind + funcs.shape[2] + 1] = solution_points_shaped
         point_ind += funcs.shape[2]
 
     return solution, np.array(errors)
-
-
-def real_to_bits(num, bits_integer, bits_decimal):
-    """Returns the closest binary representation of a given real number.
-
-    Args:
-        num (float): Number to convert.
-        bits_integer (int): Number of bits to represent integer part of number.
-        bits_decimal (int): Number of bits to represent decimal part of number.
-
-    Returns:
-        bits (numpy.ndarray (1D)): Array of bits.
-    """
-    bits = np.zeros(bits_integer + bits_decimal, dtype=int)
-    represented = -2 ** (bits_integer - 1)
-    for i in range(len(bits)):
-        bit_value = 2 ** (bits_integer - 1 - i)
-        if represented + bit_value <= num:
-            bits[i] = 1
-            represented += bit_value
-    return bits
-
-
-def bits_to_real(bits, bits_integer):
-    """Returns a real number represented by given binary representation.
-
-    Args:
-        bits (numpy.ndarray (1D)): Array of bits.
-        bits_integer (int): Number of bits to represent integer part of number.
-
-    Returns:
-        num: Represented real number.
-    """
-    bits_decimal = len(bits) - bits_integer
-    discretization_vector = [2 ** -j for j in range(-bits_integer + 1, bits_decimal + 1)]
-    return np.dot(bits, discretization_vector) - 2 ** (bits_integer - 1)
-
-
-def add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs_i, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy):
-    """Adds linear matrix elements resulting from linear terms of error functional for a given point.
-
-    Args:
-        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
-        point_ind (int): Global index of point for which the terms are to be calculated.
-        last_unknown_point_global (int): Global index of the last unknown variable included in a given calculation.
-        funcs_i (numpy.ndarray (1D)): Values of all terms defining DE at the current point.
-        dx (float): Grid step.
-        known_bits (numpy.ndarray (1D)): Array of known bits in solution (continuous from the left end).
-        bits_integer (int): Number of bits to represent integer part of coefficients.
-        bits_decimal (int): Number of bits to represent decimal part of coefficients.
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
-
-    Returns:
-        energy_shift (float): Constant part of minimization functional.
-    """
-    energy_shift = funcs_i[0] ** 2
-    bits_per_point = bits_integer + bits_decimal
-    first_unknown_point_global = int(len(known_bits) / bits_per_point)
-    for deriv_ind in range(1, len(funcs_i)):
-        deriv_order, accuracy_order, scheme_length, last_scheme_point_global = get_deriv_range(deriv_ind, point_ind, last_unknown_point_global, max_considered_accuracy)
-        coeffs = get_finite_difference_coefficients(deriv_order, accuracy_order)
-        func_factor = 2 * funcs_i[0] * funcs_i[deriv_ind] / dx ** deriv_order
-        for scheme_point in range(scheme_length):
-            c_factor = func_factor * coeffs[scheme_point]
-            scheme_point_global = point_ind + scheme_point
-            unknown_point = scheme_point_global - first_unknown_point_global
-            if unknown_point < 0:
-                point = bits_to_real(known_bits[scheme_point_global * bits_per_point : (scheme_point_global + 1) * bits_per_point], bits_integer)
-                energy_shift += c_factor * point
-            else:
-                energy_shift -= c_factor * 2 ** (bits_integer - 1)
-                for unknown_bit in range(unknown_point * bits_per_point, (unknown_point + 1) * bits_per_point):
-                    j = unknown_bit - unknown_point * bits_per_point - bits_integer + 1
-                    d[unknown_bit] += c_factor * 2 ** (-j)
-
-    return energy_shift
-
-
-def add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs_i, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy):
-    """Adds linear and quadratic matrix elements resulting from quadratic terms of error functional for a given point.
-
-    Args:
-        H (numpy.ndarray (2D)): Current quadratic minimization matrix to which quadratic matrix elements of specified point are added.
-        d (numpy.ndarray (1D)): Current quadratic minimization vector to which linear matrix elements of specified point are added.
-        point_ind (int): Global index of point for which the terms are to be calculated.
-        last_unknown_point_global (int): Global index of the last unknown variable included in a given calculation.
-        funcs_i (numpy.ndarray (1D)): Values of all terms defining DE at the current point.
-        dx (float): Grid step.
-        known_bits (numpy.ndarray (1D)): Array of known bits in solution (continuous from the left end).
-        bits_integer (int): Number of bits to represent integer part of coefficients.
-        bits_decimal (int): Number of bits to represent decimal part of coefficients.
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used is number of points is not sufficient.
-
-    Returns:
-        energy_shift (float): Constant part of minimization functional.
-    """
-    energy_shift = 0
-    bits_per_point = bits_integer + bits_decimal
-    first_unknown_point_global = int(len(known_bits) / bits_per_point)
-    for deriv_ind1 in range(1, len(funcs_i)):
-        deriv_order1, accuracy_order1, scheme_length1, last_scheme_point_global1 = get_deriv_range(deriv_ind1, point_ind, last_unknown_point_global, max_considered_accuracy)
-        coeffs1 = get_finite_difference_coefficients(deriv_order1, accuracy_order1)
-        for deriv_ind2 in range(1, len(funcs_i)):
-            deriv_order2, accuracy_order2, scheme_length2, last_scheme_point_global2 = get_deriv_range(deriv_ind2, point_ind, last_unknown_point_global, max_considered_accuracy)
-            coeffs2 = get_finite_difference_coefficients(deriv_order2, accuracy_order2)
-            func_factor = funcs_i[deriv_ind1] * funcs_i[deriv_ind2] / dx ** (deriv_order1 + deriv_order2)
-            for scheme_point1 in range(scheme_length1):
-                scheme_point_global1 = point_ind + scheme_point1
-                unknown_point1 = scheme_point_global1 - first_unknown_point_global
-                for scheme_point2 in range(scheme_length2):
-                    scheme_point_global2 = point_ind + scheme_point2
-                    unknown_point2 = scheme_point_global2 - first_unknown_point_global
-                    c_factor = func_factor * coeffs1[scheme_point1] * coeffs2[scheme_point2]
-                    if unknown_point1 < 0 and unknown_point2 < 0:
-                        point1 = bits_to_real(known_bits[scheme_point_global1 * bits_per_point : (scheme_point_global1 + 1) * bits_per_point], bits_integer)
-                        point2 = bits_to_real(known_bits[scheme_point_global2 * bits_per_point : (scheme_point_global2 + 1) * bits_per_point], bits_integer)
-                        energy_shift += c_factor * point1 * point2
-                    else:
-                        energy_shift += c_factor * 4 ** (bits_integer - 1)
-                        if unknown_point1 >= 0:
-                            for unknown_bit in range(unknown_point1 * bits_per_point, (unknown_point1 + 1) * bits_per_point):
-                                j = unknown_bit - unknown_point1 * bits_per_point - bits_integer + 1
-                                d[unknown_bit] -= c_factor * 2 ** (bits_integer - 1 - j)
-                        else:
-                            for known_bit in range(scheme_point_global1 * bits_per_point, (scheme_point_global1 + 1) * bits_per_point):
-                                j = known_bit - scheme_point_global1 * bits_per_point - bits_integer + 1
-                                energy_shift -= c_factor * 2 ** (bits_integer - 1 - j) * known_bits[known_bit]
-
-                        if unknown_point2 >= 0:
-                            for unknown_bit in range(unknown_point2 * bits_per_point, (unknown_point2 + 1) * bits_per_point):
-                                j = unknown_bit - unknown_point2 * bits_per_point - bits_integer + 1
-                                d[unknown_bit] -= c_factor * 2 ** (bits_integer - 1 - j)
-                        else:
-                            for known_bit in range(scheme_point_global2 * bits_per_point, (scheme_point_global2 + 1) * bits_per_point):
-                                j = known_bit - scheme_point_global2 * bits_per_point - bits_integer + 1
-                                energy_shift -= c_factor * 2 ** (bits_integer - 1 - j) * known_bits[known_bit]
-
-                        if unknown_point1 >= 0 and unknown_point2 >= 0:
-                            for unknown_bit1 in range(unknown_point1 * bits_per_point, (unknown_point1 + 1) * bits_per_point):
-                                j1 = unknown_bit1 - unknown_point1 * bits_per_point - bits_integer + 1
-                                for unknown_bit2 in range(unknown_point2 * bits_per_point, (unknown_point2 + 1) * bits_per_point):
-                                    j2 = unknown_bit2 - unknown_point2 * bits_per_point - bits_integer + 1
-                                    H[unknown_bit1, unknown_bit2] += c_factor * 2 ** -(j1 + j2)
-                        else:
-                            unknown_point = max(unknown_point1, unknown_point2)
-                            known_point_global = min(unknown_point1, unknown_point2) + first_unknown_point_global
-                            for unknown_bit in range(unknown_point * bits_per_point, (unknown_point + 1) * bits_per_point):
-                                j1 = unknown_bit - unknown_point * bits_per_point - bits_integer + 1
-                                for known_bit in range(known_point_global * bits_per_point, (known_point_global + 1) * bits_per_point):
-                                    j2 = known_bit - known_point_global * bits_per_point - bits_integer + 1
-                                    d[unknown_bit] += c_factor * known_bits[known_bit] * 2 ** -(j1 + j2)
-
-    return energy_shift
-
-
-def build_qubo_matrix(funcs, dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy, points_per_step):
-    """Builds matrix Q that defines quadratic unconstrained binary optimization (QUBO) problem corresponding to a given n-th order differential equation using up to k-th order difference schemes.
-
-    Args:
-        funcs (numpy.ndarray (2D)): Matrix with values of DE shift and multiplier functions. Functions are stored in rows. First row stores f (shift function).
-            Subsequent i-th row stores f_(i-1) (multiplier function of (i-1)-th derivative term). Number of columns is equal to number of function discretization points.
-        dx (float): Grid step.
-        known_bits (numpy.ndarray (1D)): Array of known bits in solution (continuous from the left end).
-        bits_integer (int): Number of bits to represent integer part of coefficients.
-        bits_decimal (int): Number of bits to represent decimal part of coefficients.
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
-        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
-
-    Returns:
-        Q (numpy.ndarray (2D)): QUBO matrix.
-        energy_shift (float): Constant part of minimization functional.
-    """
-    bits_per_point = bits_integer + bits_decimal
-    first_unknown_point_global = int(len(known_bits) / bits_per_point)
-    unknown_points = min(points_per_step, funcs.shape[1] - first_unknown_point_global)
-    unknown_bits = unknown_points * bits_per_point
-    last_unknown_point_global = first_unknown_point_global + unknown_points - 1
-    longest_scheme = funcs.shape[0] - 2 + max_considered_accuracy
-    first_contributing_point = max(first_unknown_point_global - longest_scheme + 1, 0)
-    last_contributing_point = max(last_unknown_point_global - longest_scheme + 1, 0)
-    H = np.zeros((unknown_bits, unknown_bits))
-    d = np.zeros(unknown_bits)
-    energy_shift = 0
-    for point_ind in range(first_contributing_point, last_contributing_point + 1):
-        energy_shift += add_linear_terms_qubo(d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
-        energy_shift += add_quadratic_terms_qubo(H, d, point_ind, last_unknown_point_global, funcs[:, point_ind], dx, known_bits, bits_integer, bits_decimal, max_considered_accuracy)
-    Q = H + np.diag(d)
-    return Q, energy_shift
-
-
-def solve_ode_qubo(system_terms, grid, known_points, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts, max_error, **kwargs):
-    """Solves a given differential equation, defined by funcs and known_points, by formulating it as a QUBO problem with given discretization precision.
-
-    Args:
-        system_terms (numpy.ndarray): 2D array of functions that define terms of a given system of differential equations. Rows - equations, columns - terms.
-            Each term is a function that accepts x as first argument, and the values of all other functions in the order they are specified in system_terms as subsequent arguments.
-        grid (numpy.ndarray): 1D Array of equidistant grid points.
-        known_points (numpy.ndarray): 2D array of known points for each function in the system. Rows - equations, columns - points.
-        bits_integer (int): Number of bits to represent integer part of each value of the sample solution.
-        bits_decimal (int): Number of bits to represent decimal part of each value of the sample solution.
-        max_considered_accuracy (int): Maximum accuracy order of finite difference scheme. Lower order is automatically used if number of points is not sufficient.
-        points_per_step (int): Number of points to vary in the problem, defined by this matrix.
-        sampler (dimod.core.Sampler): Sampler to use.
-        max_attempts (int): Maximum number of times each QUBO can be solved (restarts can find a better solution).
-        max_error (float): Maximum error that does not trigger restart.
-        kwargs (dict): Sampler parameters.
-
-    Returns:
-        known_points (numpy.ndarray): 2D array with solution for all functions at all points of grid.
-        errors (numpy.ndarray): 2D array with errors for each equation (rows) and each solved QUBO (columns).
-    """
-    known_points = np.vectorize(lambda num: bits_to_real(real_to_bits(num, bits_integer, bits_decimal), bits_integer))(known_points)
-    bits_per_point = bits_integer + bits_decimal
-    known_bits = np.array([np.concatenate([real_to_bits(elem, bits_integer, bits_decimal) for elem in row]) for row in known_points])
-    known_points_extended = np.pad(known_points, [(0, 0), (0, len(grid) - known_points.shape[1])], constant_values=np.nan)
-    funcs = np.array([[[term(*args) for args in np.vstack((grid, known_points_extended)).T] for term in equation_terms] for equation_terms in system_terms])
-    dx = grid[1] - grid[0]
-    errors = [[] for i in range(system_terms.shape[0])]
-    with open('log.txt', 'w') as log:
-        while known_points.shape[1] < len(grid):
-            all_solution_bits_list = []
-            all_solution_points_list = []
-            for eq_ind in range(system_terms.shape[0]):
-                Q, energy_shift = build_qubo_matrix(funcs[eq_ind, :, :], dx, known_bits[eq_ind, :], bits_integer, bits_decimal, max_considered_accuracy, points_per_step)
-                lowest_error = np.inf
-                solution_bits = np.zeros((1, Q.shape[0]))
-                for attempt in range(max_attempts):
-                    job_label = f'Point {known_points.shape[1]}; Eq. {eq_ind}; Attempt {attempt + 1}'
-                    sample_set = sampler.sample_qubo(Q, label=job_label, **kwargs)
-                    samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution (all bits together), sorted by energy
-                    trial_bits = samples_plain[0, :]
-                    solution_error = np.dot(np.matmul(trial_bits, Q), trial_bits) + energy_shift
-                    log.write(f'{job_label}; Error {solution_error}\n')
-
-                    if solution_error < lowest_error:
-                        lowest_error = solution_error
-                        solution_bits = trial_bits
-
-                    if solution_error < max_error:
-                        break
-
-                all_solution_bits_list.append(solution_bits)
-                solution_bits_shaped = np.reshape(solution_bits, (-1, bits_per_point))
-                solution_points = np.array([bits_to_real(row_bits, bits_integer) for row_bits in solution_bits_shaped])
-                all_solution_points_list.append(solution_points)
-                errors[eq_ind].append(lowest_error)
-
-            all_solution_bits = np.array(all_solution_bits_list)
-            all_solution_points = np.array(all_solution_points_list)
-            known_bits = np.hstack((known_bits, all_solution_bits))
-            known_points = np.hstack((known_points, all_solution_points))
-            # Update funcs
-            update_cols = range(known_points.shape[1] - all_solution_points.shape[1], known_points.shape[1])
-            funcs[:, :, update_cols] = [[[term(*args) for args in np.vstack((grid[update_cols], all_solution_points)).T] for term in equation_terms] for equation_terms in system_terms]
-
-    return known_points, np.array(errors)

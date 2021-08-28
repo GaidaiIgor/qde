@@ -186,34 +186,40 @@ def get_analytical_solution(problem=0, N=1000, time_max=300, initial_position=1.
     return grid, solution_vals
 
 
-def get_qp_solution(problem, N=100, time_max=400, initial_position=1.3, points_per_step=1, **kwargs):
-    grid, system_terms, boundary_condition, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    solution, errors = qde.solve_ode_qp(system_terms, grid, boundary_condition, points_per_step)
-    return grid, solution, errors
-
-
-def get_sampler(sampler_name):
+def get_sampler(sampler_name, num_repeats):
     if sampler_name == 'qbsolv':
-        return QBSolv()
+        return
     elif sampler_name == 'dwave':
-        return EmbeddingComposite(DWaveSampler())
+        return qde.DWaveSamplerWrapper(num_repeats)
     else:
         raise Exception('Unknown sampler name')
 
 
-def get_qubo_solution(problem, N=100, time_max=400, initial_position=1.3, bits_integer=6, bits_decimal=15, max_considered_accuracy=1, points_per_step=1, sampler_name='qbsolv', max_attempts=1,
-                      max_error=1e-5, **kwargs):
-    grid, system_terms, solution, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
-    sampler = get_sampler(sampler_name)
-    solution, errors = qde.solve_ode_qubo(system_terms, grid, solution, bits_integer, bits_decimal, max_considered_accuracy, points_per_step, sampler, max_attempts, max_error, **kwargs)
+def get_solver(solver_name, **kwargs):
+    if solver_name == 'qp':
+        return qde.QPSolver()
+    else:
+        if solver_name == 'qbsolv':
+            sampler = qde.QBSolvWrapper(kwargs['num_repeats'])
+        elif solver_name == 'dwave':
+            sampler = qde.DWaveSamplerWrapper(kwargs['num_reads'])
+        else:
+            raise Exception('Unknown solver')
+        return qde.QUBOSolver(kwargs['bits_integer'], kwargs['bits_decimal'], sampler)
+
+
+def get_solution(problem, N=100, time_max=400, initial_position=1.3, points_per_step=1, max_attempts=1, max_error=1e-10, solver_name='qp', num_repeats=100, num_reads=10000, bits_integer=6,
+                 bits_decimal=15):
+    grid, system_terms, boundary_condition, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
+    solver = get_solver(solver_name, num_repeats=num_repeats, num_reads=num_reads, bits_integer=bits_integer, bits_decimal=bits_decimal)
+    solution, errors = qde.solve_ode(system_terms, grid, boundary_condition, points_per_step, solver, max_attempts, max_error)
     return grid, solution, errors
 
 
 def main():
-    grid, sln, errors = get_qp_solution(problem=22, N=200, time_max=400, points_per_step=4)
     # grid, sln, errors = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='qbsolv', num_repeats=100)
 
-    # _, solution, error = get_qubo_solution(problem=21, N=200, time_max=400, initial_position=1.1, sampler_name='dwave', max_attempts=5, max_error=1e-10, num_reads=10000)
+    _, solution, error = get_solution(problem=22, N=50, time_max=400, initial_position=1.1, solver_name='qp', max_attempts=1, max_error=1e-10)
     # np.savetxt('solution.txt', solution)
     # np.savetxt('error.txt', error)
 
