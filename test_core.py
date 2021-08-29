@@ -208,19 +208,19 @@ def get_solver(solver_name, **kwargs):
         return qde.QUBOSolver(kwargs['bits_integer'], kwargs['bits_decimal'], sampler)
 
 
-def get_solution(problem, N=100, time_max=400, initial_position=1.3, points_per_step=1, max_attempts=1, max_error=1e-10, solver_name='qp', num_repeats=100, num_reads=10000, bits_integer=6,
-                 bits_decimal=15):
+def get_solution(problem, N=100, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, solver_name='qp', num_repeats=100, num_reads=10000,
+                 bits_integer=6, bits_decimal=15):
     grid, system_terms, boundary_condition, _ = get_problem(problem, N=N, time_max=time_max, initial_position=initial_position)
     solver = get_solver(solver_name, num_repeats=num_repeats, num_reads=num_reads, bits_integer=bits_integer, bits_decimal=bits_decimal)
-    solution, errors = qde.solve_ode(system_terms, grid, boundary_condition, points_per_step, solver, max_attempts, max_error)
+    solution, errors = qde.solve_ode(system_terms, grid, boundary_condition, points_per_step, equations_per_step, solver, max_attempts, max_error)
     return grid, solution, errors
 
 
 def main():
     # grid, sln, errors = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='qbsolv', num_repeats=100)
 
-    _, solution, error = get_solution(problem=22, N=50, time_max=400, initial_position=1.1, solver_name='qp', max_attempts=1, max_error=1e-10)
-    # np.savetxt('solution.txt', solution)
+    _, solution, error = get_solution(problem=22, N=50, time_max=400, initial_position=1.1, points_per_step=1, equations_per_step=2, max_attempts=5, max_error=1e-10, solver_name='qp')
+    np.savetxt('solution.txt', solution)
     # np.savetxt('error.txt', error)
 
 
