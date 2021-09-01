@@ -219,7 +219,7 @@ def get_solution(problem, N=100, time_max=400, initial_position=1.3, points_per_
 def main():
     # grid, sln, errors = get_qubo_solution(problem=21, N=50, time_max=400, sampler_name='qbsolv', num_repeats=100)
 
-    _, solution, error = get_solution(problem=22, N=50, time_max=400, initial_position=1.1, points_per_step=1, equations_per_step=2, max_attempts=5, max_error=1e-10, solver_name='qp')
+    _, solution, error = get_solution(problem=22, N=50, time_max=400, initial_position=1.1, points_per_step=1, equations_per_step=2, max_attempts=5, max_error=1e-10, solver_name='dwave')
     np.savetxt('solution.txt', solution)
     # np.savetxt('error.txt', error)
 

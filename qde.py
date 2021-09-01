@@ -49,10 +49,11 @@ class DWaveSamplerWrapper(QUBOSampler):
             num_reads (int): Number of times ground state of qubits is read.
         """
         self.num_reads = num_reads
+        self.sampler = EmbeddingComposite(DWaveSampler())
 
     def sample_qubo(self, Q, label=''):
         """See base class."""
-        sample_set = EmbeddingComposite(DWaveSampler()).sample_qubo(Q, label=label, num_reads=self.num_reads)
+        sample_set = self.sampler.sample_qubo(Q, label=label, num_reads=self.num_reads)
         return sample_set
 
 
