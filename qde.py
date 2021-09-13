@@ -5,6 +5,8 @@ from dwave_qbsolv import QBSolv
 import numpy as np
 import qpsolvers
 
+from utils_general import print_progress_bar
+
 
 class QUBOSampler:
     """Base class for implementations of QUBO sampling approaches."""
@@ -128,9 +130,10 @@ class QUBOSolver(Solver):
         """
         bits = np.zeros(self.bits_total, dtype=int)
         represented = -2 ** (self.bits_integer - 1)
+        min_step = 2 ** -self.bits_decimal
         for i in range(len(bits)):
             bit_value = 2 ** (self.bits_integer - 1 - i)
-            if represented + bit_value <= num:
+            if represented + bit_value - min_step / 2 <= num:
                 bits[i] = 1
                 represented += bit_value
         return bits
@@ -330,6 +333,7 @@ def solve_ode(system_terms, grid, boundary_condition, points_per_step, equations
         solution (numpy.ndarray): 2D array with solution for all functions at all grid points.
         errors (numpy.ndarray): 1D array with errors for each job.
     """
+    print(f'Solving ODE... Solver={type(solver).__name__}; N={len(grid)}.')
     solution = np.zeros((len(system_terms), len(grid)))
     solution[:, 0] = boundary_condition
     dx = grid[1] - grid[0]
@@ -365,5 +369,6 @@ def solve_ode(system_terms, grid, boundary_condition, points_per_step, equations
         solution_points_shaped = np.reshape(solution_points, (len(system_terms), funcs.shape[2]), order='F')
         solution[:, point_ind + 1 : point_ind + funcs.shape[2] + 1] = solution_points_shaped
         point_ind += funcs.shape[2]
+        print_progress_bar(point_ind, len(working_grid))
 
     return solution, np.array(errors)

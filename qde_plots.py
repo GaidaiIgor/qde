@@ -1,12 +1,12 @@
 import addcopyfighandler
+from cycler import cycler
 import findiff
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from cycler import cycler
 
 from plots_general import my_plot, my_scatter
-from test_core import Hydrogen, get_analytical_solution, get_qubo_solution
+from test_core import *
 
 addcopyfighandler.dummy_use = 1
 
@@ -67,7 +67,7 @@ def plot_solution_rp_file(file_path='solution.txt', **kwargs):
     return plot_solution_rp(solution[0, :], solution[1, :], **kwargs)
 
 
-def plot_error(solution_n, true_answer_n, Ns=None, **kwargs):
+def plot_error(solution_n, true_solution, Ns=None, **kwargs):
     """Plots error at given values of Ns. solution_n and answer_n are function of n."""
     if Ns is None:
         Ns = np.geomspace(10, 100, 5, dtype=int)
@@ -75,32 +75,20 @@ def plot_error(solution_n, true_answer_n, Ns=None, **kwargs):
     for i in range(len(Ns)):
         N = Ns[i]
         solution = solution_n(N)
-        true_answer = true_answer_n(N)
-        error = abs((solution[-1] - true_ans[-1]) / true_ans[-1]) * 100
+        error = abs((solution[-1] - true_solution[-1]) / true_solution[-1]) * 100
         plot_data[:, i] = (N, error)
 
-    axes = my_plot(plot_data[0, :], plot_data[1, :], **kwargs)
+    axes = my_plot(plot_data[0, :], plot_data[1, :], log=True, **kwargs)
     axes.set_xlabel('N')
     axes.set_ylabel('Error, %')
     return axes
 
 
 def main():
-    np.set_printoptions(precision=15, linewidth=200)
-    mpl.rcParams['axes.prop_cycle'] = cycler(color='brgkcmy')
-
-    grid, solution = get_analytical_solution(problem=22, N=1600, time_max=400)
-    axes = plot_solution_rp_tr(grid, solution)
-
-    grid, sln, errors = get_qp_solution(problem=22, N=50, time_max=400)
-    axes = plot_solution_rp(sln[0, :], sln[1, :], axes=axes)
-
-    # _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='qbsolv', num_repeats=100)
-    # axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
-    #
-    # _, solution = get_qubo_solution(problem=21, N=200, time_max=400, sampler_name='dwave', num_reads=10000)
-    # np.savetxt('solution.txt', solution)
-    # axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes)
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/N_{n}/solution.txt')[0, :]
+    _, analytical_solution = get_analytical_solution(problem_id=0, N=1000, time_max=400, initial_position=1.3)
+    Ns = np.geomspace(10, 1000, 5, dtype=int)
+    axes = plot_error(solution_n, analytical_solution, Ns)
 
     if not mpl.is_interactive():
         plt.show()
