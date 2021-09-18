@@ -5,6 +5,8 @@ from dwave_qbsolv import QBSolv
 import numpy as np
 import qpsolvers
 
+import greedy
+
 from utils_general import print_progress_bar
 
 
@@ -182,6 +184,10 @@ class QUBOSolver(Solver):
         """See base class."""
         Q = self.convert_qp_matrices_to_qubo(H, d)[0]
         sample_set = self.sampler.sample_qubo(Q, label=job_label)
+
+        # Add greedy
+        # sample_set = greedy.SteepestDescentSolver().sample_qubo(Q, initial_states=sample_set)
+
         samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution_real (all bits together), sorted by energy
         solution_bits = samples_plain[0, :]
         solution_bits_shaped = np.reshape(solution_bits, (H.shape[0], self.bits_total))

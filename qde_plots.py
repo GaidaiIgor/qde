@@ -5,7 +5,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
-from plots_general import my_plot, my_scatter
+from plots_general import my_plot
 from test_core import *
 
 addcopyfighandler.dummy_use = 1
@@ -48,7 +48,6 @@ def plot_solution_tr(t, r, **kwargs):
 
 
 def plot_solution_rp(r, p, **kwargs):
-    # axes = my_scatter(r, p, **kwargs)
     axes = my_plot(r, p, **kwargs)
     axes.set_xlabel('r, a.u.')
     axes.set_ylabel('p, a.u.')
@@ -67,31 +66,71 @@ def plot_solution_rp_file(file_path='solution.txt', **kwargs):
     return plot_solution_rp(solution[0, :], solution[1, :], **kwargs)
 
 
-def plot_error(solution_n, true_solution, Ns=None, **kwargs):
+def plot_error(solution_n, true_solution_n, Ns, **kwargs):
     """Plots error at given values of Ns. solution_n and answer_n are function of n."""
-    if Ns is None:
-        Ns = np.geomspace(10, 100, 5, dtype=int)
     plot_data = np.empty((2, len(Ns)))
     for i in range(len(Ns)):
         N = Ns[i]
         solution = solution_n(N)
-        error = abs((solution[-1] - true_solution[-1]) / true_solution[-1]) * 100
+        true_solution = true_solution_n(N)
+        # error = abs((solution[-1] - true_solution[-1]) / true_solution[-1]) * 100
+        error = np.sqrt(sum((solution - true_solution) ** 2) / len(solution))
+        # error = max(abs(solution - true_solution))
         plot_data[:, i] = (N, error)
 
     axes = my_plot(plot_data[0, :], plot_data[1, :], log=True, **kwargs)
     axes.set_xlabel('N')
-    axes.set_ylabel('Error, %')
+    axes.set_ylabel('RMSE, Bohr')
     return axes
 
 
-def main():
-    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/N_{n}/solution.txt')[0, :]
-    _, analytical_solution = get_analytical_solution(problem_id=0, N=1000, time_max=400, initial_position=1.3)
+def plot_all_errors_vs_n_eq_1():
+    """Plots errors as a function of N for multiple approaches, 1 equation per step."""
     Ns = np.geomspace(10, 1000, 5, dtype=int)
-    axes = plot_error(solution_n, analytical_solution, Ns)
+    analytical_solution_n = lambda n: get_analytical_solution(problem_id=0, N=n, time_max=400, initial_position=1.3)[1]
 
-    if not mpl.is_interactive():
-        plt.show()
+    solution_n = lambda n: np.loadtxt(f'../results/qp/eq_1/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns)
+
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_1/attempts_1/kd_15/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_1/attempts_1/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_1/attempts_5/initial_1.3/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+
+def plot_all_errors_vs_n_eq_2():
+    """Plots errors as a function of N for multiple approaches, 2 equations per step."""
+    Ns = np.geomspace(10, 1000, 5, dtype=int)
+    analytical_solution_n = lambda n: get_analytical_solution(problem_id=0, N=n, time_max=400, initial_position=1.3)[1]
+
+    solution_n = lambda n: np.loadtxt(f'../results/qp/eq_2/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns)
+
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_1/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_1/greedy/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_5/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_1/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_5/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+
+
+def main():
+    solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, solver_name='qp')[1]
+    axes = plot_solution_rp(solution[0, :], solution[1, :], axes=None, marker='None')
+    solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, solver_name='qbsolv')[1]
+    axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes, marker='None')
 
 
 if __name__ == '__main__':

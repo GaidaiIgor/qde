@@ -138,9 +138,10 @@ def get_solution(problem_id, N=100, time_max=400, initial_position=1.3, points_p
 def main():
     Ns = np.geomspace(10, 1000, 5, dtype=int)
     for N in Ns:
-        _, solution, error = get_solution(problem_id=0, N=N, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=1, max_attempts=5, max_error=1e-10, solver_name='qbsolv')
+        _, solution, error = get_solution(problem_id=0, N=N, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=5, max_error=1e-10, solver_name='qbsolv',
+                                          bits_decimal=15)
         # dir_path = f'results/N_{N}'
-        dir_path = f'../results/qbsolv/N_{N}'
+        dir_path = f'../results/qbsolv/eq_2/attempts_5/N_{N}'
         os.makedirs(dir_path, exist_ok=True)
         np.savetxt(dir_path + '/solution.txt', solution)
 
