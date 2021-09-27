@@ -1,8 +1,6 @@
-from dwave.system.composites import EmbeddingComposite
-from dwave.system.samplers import DWaveSampler
-from dwave_qbsolv import QBSolv
-import numpy as np
 import os
+
+import numpy as np
 
 import qde
 
@@ -78,7 +76,6 @@ def get_problem(problem_id, **kwargs):
     """Returns problem-specific values: grid, system_terms, boundary condition and answer.
     kwargs: N, time_max, initial_position."""
     if problem_id == 0:
-        # Same as 2, but as a system of first-order equations, new version
         time_max = kwargs['time_max']
         N = kwargs['N']
         initial_position = kwargs['initial_position']
@@ -87,6 +84,20 @@ def get_problem(problem_id, **kwargs):
         system_terms = np.empty(2, dtype=object)
         system_terms[0] = lambda t, r, p: p / Hydrogen.mu
         system_terms[1] = lambda t, r, p: Hydrogen.get_force_morse(r)
+
+        boundary_condition = np.array([initial_position, 0])
+        solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
+
+    elif problem_id == 1:
+        # Same as 0, but with scaled momentum
+        time_max = kwargs['time_max']
+        N = kwargs['N']
+        initial_position = kwargs['initial_position']
+        grid = np.linspace(0, time_max, N)
+
+        system_terms = np.empty(2, dtype=object)
+        system_terms[0] = lambda t, r, p: p / Hydrogen.mu * 20
+        system_terms[1] = lambda t, r, p: Hydrogen.get_force_morse(r) / 20
 
         boundary_condition = np.array([initial_position, 0])
         solution = lambda t: Hydrogen.morse_trajectory_v0(initial_position, t)
@@ -105,45 +116,61 @@ def get_analytical_solution(problem_id=0, N=1000, time_max=400, initial_position
     return grid, solution_vals
 
 
-def get_sampler(sampler_name, num_repeats):
-    if sampler_name == 'qbsolv':
-        return
-    elif sampler_name == 'dwave':
-        return qde.DWaveSamplerWrapper(num_repeats)
-    else:
-        raise Exception('Unknown sampler name')
-
-
-def get_solver(solver_name, **kwargs):
-    if solver_name == 'qp':
+def get_solver(method, **kwargs):
+    """Returns solver corresponding to requested method."""
+    if method == 'qp':
         return qde.QPSolver()
     else:
-        if solver_name == 'qbsolv':
+        if method == 'qbsolv':
             sampler = qde.QBSolvWrapper(kwargs['num_repeats'])
-        elif solver_name == 'dwave':
-            sampler = qde.DWaveSamplerWrapper(kwargs['num_reads'])
+        elif method == 'dwave':
+            sampler = qde.DWaveSamplerWrapper(kwargs['num_reads'], kwargs['use_greedy'])
         else:
             raise Exception('Unknown solver')
         return qde.QUBOSolver(kwargs['bits_integer'], kwargs['bits_decimal'], sampler)
 
 
-def get_solution(problem_id, N=100, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, solver_name='qp', num_repeats=100, num_reads=10000,
-                 bits_integer=6, bits_decimal=15):
+def get_solution(problem_id, N=100, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, method='qp', num_repeats=100, num_reads=10000,
+                 use_greedy=False, bits_integer=6, bits_decimal=15):
     grid, system_terms, boundary_condition, _ = get_problem(problem_id, N=N, time_max=time_max, initial_position=initial_position)
-    solver = get_solver(solver_name, num_repeats=num_repeats, num_reads=num_reads, bits_integer=bits_integer, bits_decimal=bits_decimal)
+    solver = get_solver(method, num_repeats=num_repeats, num_reads=num_reads, use_greedy=use_greedy, bits_integer=bits_integer, bits_decimal=bits_decimal)
     solution, errors = qde.solve_ode(system_terms, grid, boundary_condition, points_per_step, equations_per_step, solver, max_attempts, max_error)
     return grid, solution, errors
 
 
+def save_makedirs(dir_path, solution):
+    """Saves given array in a file at given path, creating directories if necessary."""
+    os.makedirs(dir_path, exist_ok=True)
+    np.savetxt(dir_path + '/solution.txt', solution)
+
+
 def main():
+    # N = 100
+    # for r0 in [0.7]:
+    #     print(f'r0 = {r0}')
+    #     time_max = 800 if r0 == 0.9 else 400
+    #     print('Solving with 1 attempt')
+    #     _, solution, error = get_solution(problem_id=0, N=N, time_max=time_max, initial_position=r0, points_per_step=1, equations_per_step=1, max_attempts=1, method='dwave', use_greedy=False)
+    #     save_makedirs(f'results/attempts_1/r0_{r0}', solution)
+    #     print('Solving with 10 attempts')
+    #     _, solution, error = get_solution(problem_id=0, N=N, time_max=time_max, initial_position=r0, points_per_step=1, equations_per_step=1, max_attempts=10, method='dwave', use_greedy=False)
+    #     save_makedirs(f'results/attempts_10/r0_{r0}', solution)
+    #     print('Solving with greedy')
+    #     _, solution, error = get_solution(problem_id=0, N=N, time_max=time_max, initial_position=r0, points_per_step=1, equations_per_step=2, max_attempts=1, method='dwave', use_greedy=True)
+    #     save_makedirs(f'results/greedy/r0_{r0}', solution)
+
+    # for i in range(3):
+    #     solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, method='dwave')[1]
+    #     dir_path = 'results'
+    #     # dir_path = f'../results/qbsolv/eq_2/attempts_1/pure_greedy'
+    #     os.makedirs(dir_path, exist_ok=True)
+    #     np.savetxt(dir_path + f'/solution_{i}.txt', solution)
+
     Ns = np.geomspace(10, 1000, 5, dtype=int)
     for N in Ns:
-        _, solution, error = get_solution(problem_id=0, N=N, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=5, max_error=1e-10, solver_name='qbsolv',
-                                          bits_decimal=15)
-        # dir_path = f'results/N_{N}'
-        dir_path = f'../results/qbsolv/eq_2/attempts_5/N_{N}'
-        os.makedirs(dir_path, exist_ok=True)
-        np.savetxt(dir_path + '/solution.txt', solution)
+        _, solution, error = get_solution(problem_id=1, N=N, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=10, method='dwave')
+        save_makedirs(f'results/N_{N}', solution)
+        # save_makedirs(f'../results/qbsolv/eq_2/attempts_10/scaled/N_{N}', solution)
 
 
 if __name__ == '__main__':

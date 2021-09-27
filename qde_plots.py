@@ -1,9 +1,5 @@
 import addcopyfighandler
-from cycler import cycler
 import findiff
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import numpy as np
 
 from plots_general import my_plot
 from test_core import *
@@ -43,13 +39,13 @@ def plot_force_morse(**kwargs):
 def plot_solution_tr(t, r, **kwargs):
     axes = my_plot(t, r, **kwargs)
     axes.set_xlabel('t, a.u.')
-    axes.set_ylabel('r, a.u.')
+    axes.set_ylabel('r, Bohr')
     return axes
 
 
 def plot_solution_rp(r, p, **kwargs):
     axes = my_plot(r, p, **kwargs)
-    axes.set_xlabel('r, a.u.')
+    axes.set_xlabel('r, Bohr')
     axes.set_ylabel('p, a.u.')
     return axes
 
@@ -79,7 +75,7 @@ def plot_error(solution_n, true_solution_n, Ns, **kwargs):
         plot_data[:, i] = (N, error)
 
     axes = my_plot(plot_data[0, :], plot_data[1, :], log=True, **kwargs)
-    axes.set_xlabel('N')
+    axes.set_xlabel('M')
     axes.set_ylabel('RMSE, Bohr')
     return axes
 
@@ -90,16 +86,19 @@ def plot_all_errors_vs_n_eq_1():
     analytical_solution_n = lambda n: get_analytical_solution(problem_id=0, N=n, time_max=400, initial_position=1.3)[1]
 
     solution_n = lambda n: np.loadtxt(f'../results/qp/eq_1/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns)
+    axes = plot_error(solution_n, analytical_solution_n, Ns, label='QP')
 
     solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_1/attempts_1/kd_15/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='QBSolv')
 
     solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_1/attempts_1/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave 1')
 
-    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_1/attempts_5/initial_1.3/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    # solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_1/attempts_5/initial_1.3/N_{n}/solution.txt')[0, :]
+    # axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='Dwave 5')
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_1/attempts_10/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='Dwave 10')
 
 
 def plot_all_errors_vs_n_eq_2():
@@ -108,28 +107,55 @@ def plot_all_errors_vs_n_eq_2():
     analytical_solution_n = lambda n: get_analytical_solution(problem_id=0, N=n, time_max=400, initial_position=1.3)[1]
 
     solution_n = lambda n: np.loadtxt(f'../results/qp/eq_2/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns)
+    axes = plot_error(solution_n, analytical_solution_n, Ns, label='QP')
 
     solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_1/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='QBSolv 1')
 
-    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_1/greedy/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    # solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_1/greedy/N_{n}/solution.txt')[0, :]
+    # axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='QBSolv 1 greedy')
 
-    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_5/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_1/scaled/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='QBSolv 1 scaled')
 
-    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_1/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_10/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='QBSolv 10')
 
-    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_5/N_{n}/solution.txt')[0, :]
-    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes)
+    solution_n = lambda n: np.loadtxt(f'../results/qbsolv/eq_2/attempts_10/scaled/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='QBSolv 10 scaled')
+
+    # solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_1/N_{n}/solution.txt')[0, :]
+    # axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave')
+
+    # solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_5/N_{n}/solution.txt')[0, :]
+    # axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave 5')
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_10/at_20/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave 10')
+
+    # solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_1/at_200/chain/N_{n}/solution.txt')[0, :]
+    # axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave+ 1')
+    #
+    # solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_5/at_200/N_{n}/solution.txt')[0, :]
+    # axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave+ 5')
+
+    solution_n = lambda n: np.loadtxt(f'../results/dwave/eq_2/attempts_1/greedy/N_{n}/solution.txt')[0, :]
+    axes = plot_error(solution_n, analytical_solution_n, Ns, axes=axes, label='DWave 1 + greedy', color='m')
+
+
+def plot_trajectories():
+    """Plots a few representative trajectories."""
+    grid, analytical_solution = get_analytical_solution(problem_id=0, N=1000, time_max=400, initial_position=1.3)
+    axes = plot_solution_rp_tr(grid, analytical_solution, axes=None, marker='None', color='b', label='Analytical')
+    axes = plot_solution_rp_file('../results/dwave/eq_1/attempts_1/N_1000/solution.txt', axes=axes, marker='None', color='g', label='DWave 1')
+    axes = plot_solution_rp_file('../results/dwave/eq_1/attempts_10/N_1000/solution.txt', axes=axes, marker='None', color='k', label='DWave 10')
+    axes = plot_solution_rp_file('../results/dwave/eq_2/attempts_1/greedy/N_1000/solution.txt', axes=axes, marker='None', color='m', label='DWave 1 + greedy')
 
 
 def main():
-    solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, solver_name='qp')[1]
+    solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, method='qp')[1]
     axes = plot_solution_rp(solution[0, :], solution[1, :], axes=None, marker='None')
-    solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, solver_name='qbsolv')[1]
+    solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, method='qbsolv')[1]
     axes = plot_solution_rp(solution[0, :], solution[1, :], axes=axes, marker='None')
 
 

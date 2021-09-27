@@ -1,11 +1,10 @@
 """This module contains functions that solve differential equations by transforming them to QUBO problems, which allows solution on quantum annealer."""
+import greedy
+import numpy as np
+import qpsolvers
 from dwave.system.composites import EmbeddingComposite
 from dwave.system.samplers import DWaveSampler
 from dwave_qbsolv import QBSolv
-import numpy as np
-import qpsolvers
-
-import greedy
 
 from utils_general import print_progress_bar
 
@@ -33,31 +32,41 @@ class QBSolvWrapper(QUBOSampler):
         """Initializes instance.
 
         Args:
-            num_repeats (int): Number of times to repeat sampling procedure to attempt to find a better solution.
+            num_repeats (int): Number of times to repeat sampling procedure in attempt to find a better solution.
         """
         self.num_repeats = num_repeats
 
     def sample_qubo(self, Q, label=''):
         """See base class."""
         sample_set = QBSolv().sample_qubo(Q, label=label, num_repeats=self.num_repeats)
+        # sample_set = greedy.SteepestDescentSolver().sample_qubo(Q, initial_states=sample_set)
+        # sample_set = greedy.SteepestDescentSolver().sample_qubo(Q)
         return sample_set
 
 
 class DWaveSamplerWrapper(QUBOSampler):
     """Uses D-Wave quantum annealer for sampling."""
 
-    def __init__(self, num_reads):
+    def __init__(self, num_reads, use_greedy):
         """Initializes instance.
 
         Args:
             num_reads (int): Number of times ground state of qubits is read.
+            use_greedy (bool): Whether to use classical greedy algorithm to improve sampling results.
         """
         self.num_reads = num_reads
+        self.use_greedy = use_greedy
         self.sampler = EmbeddingComposite(DWaveSampler())
+        # self.sampler = EmbeddingComposite(DWaveSampler(annealing_time=200))
 
     def sample_qubo(self, Q, label=''):
         """See base class."""
+        # sample_set = self.sampler.sample_qubo(Q, label=label)
         sample_set = self.sampler.sample_qubo(Q, label=label, num_reads=self.num_reads)
+        # sample_set = self.sampler.sample_qubo(Q, label=label, num_reads=self.num_reads, chain_strength=0.3 * np.max(abs(Q)))
+        # print('\nPercentage of samples with high rates of breaks (> 0.10) is ', np.count_nonzero(sample_set.record.chain_break_fraction > 0.10) / self.num_reads * 100)
+        if self.use_greedy:
+            sample_set = greedy.SteepestDescentSolver().sample_qubo(Q, initial_states=sample_set)
         return sample_set
 
 
@@ -83,7 +92,7 @@ class QPSolver(Solver):
 
     def solve(self, H, d, job_label=''):
         """See base class."""
-        solution = qpsolvers.solve_qp(2*H, d)
+        solution = qpsolvers.solve_qp(2 * H, d)
         return solution
 
 
@@ -123,10 +132,8 @@ class QUBOSolver(Solver):
 
     def real_to_bits(self, num):
         """Returns the closest binary representation of a given real number.
-
         Args:
             num (float): Number to convert.
-
         Returns:
             bits (numpy.ndarray): 1D array of bits.
         """
@@ -184,10 +191,6 @@ class QUBOSolver(Solver):
         """See base class."""
         Q = self.convert_qp_matrices_to_qubo(H, d)[0]
         sample_set = self.sampler.sample_qubo(Q, label=job_label)
-
-        # Add greedy
-        # sample_set = greedy.SteepestDescentSolver().sample_qubo(Q, initial_states=sample_set)
-
         samples_plain = np.array([list(sample.values()) for sample in sample_set])  # 2D, each row - solution_real (all bits together), sorted by energy
         solution_bits = samples_plain[0, :]
         solution_bits_shaped = np.reshape(solution_bits, (H.shape[0], self.bits_total))
@@ -349,11 +352,11 @@ def solve_ode(system_terms, grid, boundary_condition, points_per_step, equations
     while point_ind < len(working_grid):
         if point_ind == 0:
             sampling_steps = np.zeros(len(system_terms))
-            funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind : point_ind + 1])
+            funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind: point_ind + 1])
         else:
             sampling_steps = solution[:, point_ind] - solution[:, point_ind - 1]
             sampling_steps[abs(sampling_steps) < 1e-10] = 1e-10  # Ensure non-zero steps
-            funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind : point_ind + points_per_step])
+            funcs = calculate_term_coefficients(system_terms, solution[:, point_ind], sampling_steps, working_grid[point_ind: point_ind + points_per_step])
 
         solution_points = np.zeros(solution.shape[0])
         eq_ind = 0
@@ -366,14 +369,14 @@ def solve_ode(system_terms, grid, boundary_condition, points_per_step, equations
                 trial_error = np.dot(np.matmul(trial_points, H), trial_points) + np.dot(trial_points, d) + energy_shift
                 if trial_error < lowest_error:
                     lowest_error = trial_error
-                    solution_points[eq_ind : eq_ind + equations_per_step] = trial_points
+                    solution_points[eq_ind: eq_ind + equations_per_step] = trial_points
                 if trial_error < max_error:
                     break
             errors.append(lowest_error)
             eq_ind += equations_per_step
 
         solution_points_shaped = np.reshape(solution_points, (len(system_terms), funcs.shape[2]), order='F')
-        solution[:, point_ind + 1 : point_ind + funcs.shape[2] + 1] = solution_points_shaped
+        solution[:, point_ind + 1: point_ind + funcs.shape[2] + 1] = solution_points_shaped
         point_ind += funcs.shape[2]
         print_progress_bar(point_ind, len(working_grid))
 
