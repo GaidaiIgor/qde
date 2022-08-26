@@ -73,7 +73,11 @@ class Hydrogen:
 
 
 def get_problem(problem_id, **kwargs):
-    """Returns problem-specific values: grid, system_terms, boundary condition and answer.
+    """This function returns description of a given problem, which consists from: grid, system_terms, boundary_condition and solution (optionally).
+    grid - an array that defines what grid is used for time propagation
+    system_terms - an array where each element is a function of time and values of all unknown functions (y-vector).
+    boundary_condition - an array that defines the values of all unknown functions at time t=0
+    solution - an optional function that describes analytical form of the solution (if known) for comparison with the results of propagation.
     kwargs: N, time_max, initial_position."""
     if problem_id == 0:
         time_max = kwargs['time_max']
@@ -130,7 +134,7 @@ def get_solver(method, **kwargs):
         return qde.QUBOSolver(kwargs['bits_integer'], kwargs['bits_decimal'], sampler)
 
 
-def get_solution(problem_id, N=100, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, max_error=1e-10, method='qp', num_repeats=100, num_reads=10000,
+def get_solution(problem_id, N=100, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=1, max_attempts=1, max_error=1e-10, method='qp', num_repeats=100, num_reads=10000,
                  use_greedy=False, bits_integer=6, bits_decimal=15):
     grid, system_terms, boundary_condition, _ = get_problem(problem_id, N=N, time_max=time_max, initial_position=initial_position)
     solver = get_solver(method, num_repeats=num_repeats, num_reads=num_reads, use_greedy=use_greedy, bits_integer=bits_integer, bits_decimal=bits_decimal)
@@ -145,32 +149,8 @@ def save_makedirs(dir_path, solution):
 
 
 def main():
-    # N = 100
-    # for r0 in [0.7]:
-    #     print(f'r0 = {r0}')
-    #     time_max = 800 if r0 == 0.9 else 400
-    #     print('Solving with 1 attempt')
-    #     _, solution, error = get_solution(problem_id=0, N=N, time_max=time_max, initial_position=r0, points_per_step=1, equations_per_step=1, max_attempts=1, method='dwave', use_greedy=False)
-    #     save_makedirs(f'results/attempts_1/r0_{r0}', solution)
-    #     print('Solving with 10 attempts')
-    #     _, solution, error = get_solution(problem_id=0, N=N, time_max=time_max, initial_position=r0, points_per_step=1, equations_per_step=1, max_attempts=10, method='dwave', use_greedy=False)
-    #     save_makedirs(f'results/attempts_10/r0_{r0}', solution)
-    #     print('Solving with greedy')
-    #     _, solution, error = get_solution(problem_id=0, N=N, time_max=time_max, initial_position=r0, points_per_step=1, equations_per_step=2, max_attempts=1, method='dwave', use_greedy=True)
-    #     save_makedirs(f'results/greedy/r0_{r0}', solution)
-
-    # for i in range(3):
-    #     solution = get_solution(problem_id=0, N=50, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=1, method='dwave')[1]
-    #     dir_path = 'results'
-    #     # dir_path = f'../results/qbsolv/eq_2/attempts_1/pure_greedy'
-    #     os.makedirs(dir_path, exist_ok=True)
-    #     np.savetxt(dir_path + f'/solution_{i}.txt', solution)
-
-    Ns = np.geomspace(10, 1000, 5, dtype=int)
-    for N in Ns:
-        _, solution, error = get_solution(problem_id=1, N=N, time_max=400, initial_position=1.3, points_per_step=1, equations_per_step=2, max_attempts=10, method='dwave')
-        save_makedirs(f'results/N_{N}', solution)
-        # save_makedirs(f'../results/qbsolv/eq_2/attempts_10/scaled/N_{N}', solution)
+    _, solution, error = get_solution(problem_id=0)
+    print(solution)
 
 
 if __name__ == '__main__':
